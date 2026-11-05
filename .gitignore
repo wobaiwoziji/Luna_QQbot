@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+logs/
+picture/
+scripts/qq-channel.config.json
