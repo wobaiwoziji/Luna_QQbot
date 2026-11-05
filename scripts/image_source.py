@@ -60,7 +60,10 @@ def log(message: str) -> None:
 
 
 def load_tag_map() -> dict:
-    data = json.loads(TAG_MAP_PATH.read_text(encoding="utf-8-sig"))
+    try:
+        data = json.loads(TAG_MAP_PATH.read_text(encoding="utf-8-sig"))
+    except Exception:
+        data = {}
     for key in ("ips", "chars", "combos"):
         table = data.get(key) or {}
         data[key] = {str(name).strip().lower(): str(tag).strip() for name, tag in table.items()}
