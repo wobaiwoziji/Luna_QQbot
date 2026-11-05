@@ -13,6 +13,7 @@ from pathlib import Path
 
 import requests
 
+import memory
 import token_usage
 
 HERE = Path(__file__).resolve().parent
@@ -23,7 +24,7 @@ API_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
 VISION_MODEL = "deepseek-flash"
 MAX_INPUT = 300
-MAX_HISTORY = 8
+MAX_HISTORY = 6
 MAX_GROUPS = 50
 TASK_LENGTH = 120
 
@@ -247,7 +248,7 @@ def _image_part(path) -> dict:
     }
 
 
-def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "") -> str | None:
+def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "") -> str | None:
     _load_history(group_openid)
     original = (text or "").strip()[:MAX_INPUT]
     if not original and not context:
@@ -293,18 +294,36 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         raise RuntimeError("缺少 DeepSeek key")
 
     system_prompt = persona() + (SISTER_NOTE if sister else NOT_SISTER_NOTE)
+    extra_blocks: list[str] = []
+    long_answer = False
+
     if respect or is_respected(original) or is_respected(target):
-        system_prompt += RESPECT_NOTE
+        extra_blocks.append(RESPECT_NOTE.strip())
     if profile:
-        system_prompt += (
-            "\n\n【对方资料】（本地统计，自然带过就行，不要逐条念，也不要暴露你在记录）\n" + profile
+        extra_blocks.append(
+            "【对方资料】（本地统计，自然带过就行，不要逐条念，也不要暴露你在记录）\n" + profile
+        )
+    if tool_result:
+        extra_blocks.append(
+            "【工具结果】（直接据此回答，别编造，也别提工具或接口；数字和单位照实说）\n" + tool_result
+        )
+    recalled = memory.recall(group_openid, original)
+    if recalled:
+        extra_blocks.append(
+            "【以前群里聊过】（只作参考，别逐条念，也别暴露你在查记录；和时间对不上就忽略）\n" + recalled
+        )
+    brief = memory.recent_summary(group_openid)
+    if brief:
+        extra_blocks.append(
+            "【最近群聊】（只作参考，别重复复述，也别暴露你在看摘要）\n" + brief
         )
     if original and is_lore(original):
-        system_prompt += LORE_NOTE + load_lore()
+        long_answer = True
+        extra_blocks.append((LORE_NOTE + load_lore()).strip())
         fetched = web_lore(original) or web_search(original)
         if fetched:
-            system_prompt += (
-                "\n\n【实时检索到的资料】（可能不完整，和上面的记录冲突时以记录为准）\n" + fetched
+            extra_blocks.append(
+                "【实时检索到的资料】（可能不完整，和上面的记录冲突时以记录为准）\n" + fetched
             )
             log(f"lore web hit key={group_openid} chars={len(fetched)}")
         else:
@@ -317,18 +336,21 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
             query = f"{_last_query[group_openid]} {original}"
         fetched = web_search(query)
         if fetched:
+            long_answer = True
             _last_query[group_openid] = re.sub(r'[，。？?!！、,.~～]+', ' ', query).strip()[:30]
-            system_prompt += (
-                "\n\n【检索到的公开资料】\n" + fetched
+            extra_blocks.append(
+                "【检索到的公开资料】\n" + fetched
                 + "\n（据此回答，用你自己的口吻；资料够多就讲清楚——3-6 句、最多 200 字，"
                 "把关键事实说明白，最后可以带一句评价。不要声称自己没有联网能力。）"
             )
             log(f"web search hit key={group_openid} chars={len(fetched)}")
         else:
-            system_prompt += "\n\n（暂时检索不到，凭你已有的认知回答，不要说自己不能联网。）"
+            extra_blocks.append("（暂时检索不到，凭你已有的认知回答，不要说自己不能联网。）")
             log(f"web search miss key={group_openid}")
 
-    long_answer = "【检索到的公开资料】" in system_prompt or "【实时检索到的资料】" in system_prompt
+    if extra_blocks:
+        prompt = prompt + "\n\n" + "\n\n".join(extra_blocks)
+
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(_history.get(group_openid, []))
     if images:

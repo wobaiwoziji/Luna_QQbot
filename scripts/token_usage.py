@@ -35,6 +35,11 @@ def record(source: str, model: str, usage, images: int = 0) -> None:
         "completion": completion,
         "total": total,
     }
+    hit = int(usage.get("prompt_cache_hit_tokens") or 0)
+    miss = int(usage.get("prompt_cache_miss_tokens") or 0)
+    if hit or miss:
+        entry["hit"] = hit
+        entry["miss"] = miss if miss else max(prompt - hit, 0)
     if images:
         entry["images"] = int(images)
 

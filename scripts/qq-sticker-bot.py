@@ -198,7 +198,7 @@ _control_state: dict[str, bool] = {}
 
 
 def control_enabled(name: str, default: bool = True) -> bool:
-    """从配置开关读取状态；文件或键不存在时用默认值。"""
+    """Live switches written by the web workbench. Missing file/key means default."""
     value = default
     try:
         data = json.loads(CONTROL_PATH.read_text(encoding="utf-8"))
@@ -247,7 +247,7 @@ _registered_groups: set[str] = set()
 
 
 def register_group(module, token_state: dict, group_openid: str) -> None:
-    """记录机器人加入的群，写进 logs/groups.json。"""
+    """Remember groups the bot is added to, so the workbench can list them."""
     group_openid = str(group_openid or "").strip()
     if not group_openid or group_openid in _registered_groups:
         return
@@ -286,7 +286,7 @@ def register_group(module, token_state: dict, group_openid: str) -> None:
 
 
 def control_groups(name: str, default_groups: list[str]) -> list[str]:
-    """读取按群开关；没有配置时用默认群列表。"""
+    """Per-group selection written by the web workbench. Missing selection means default."""
     all_groups = list(default_groups)
     try:
         registry = json.loads(GROUPS_PATH.read_text(encoding="utf-8"))
@@ -453,6 +453,9 @@ def main() -> int:
     proactive = load_module("luna_proactive.py", "luna_proactive")
     bili = load_module("luna_bili.py", "luna_bili")
     channel = load_module("luna_channel.py", "luna_channel")
+    memory = load_module("memory.py", "memory")
+    reminders = load_module("reminders.py", "reminders")
+    tools = load_module("tools.py", "tools")
     night = load_module("luna_night.py", "luna_night")
     holiday = load_module("luna_holiday.py", "luna_holiday")
     guard = load_module("input_guard.py", "input_guard")
@@ -540,6 +543,43 @@ def main() -> int:
 
     threading.Thread(target=channel_loop, daemon=True).start()
     log("channel post loop started")
+
+    def memory_loop():
+        time.sleep(20)
+        while True:
+            try:
+                memory.index_all()
+                memory.update_all_summaries()
+            except Exception as exc:
+                log(f"memory index failed: {exc}")
+            time.sleep(300)
+
+    threading.Thread(target=memory_loop, daemon=True).start()
+    log("memory index loop started")
+
+    def reminder_loop():
+        time.sleep(15)
+        while True:
+            try:
+                due = reminders.take_due()
+                if due:
+                    reminder_token = module.get_access_token(app_id, client_secret)
+                    for item in due:
+                        try:
+                            module.send_group_message(
+                                reminder_token,
+                                item.get("group", ""),
+                                f"时间到了。{item.get('text', '')}。",
+                            )
+                            log(f"reminder sent group={str(item.get('group'))[:8]}")
+                        except Exception as exc:
+                            log(f"reminder send failed: {exc}")
+            except Exception as exc:
+                log(f"reminder loop failed: {exc}")
+            time.sleep(60)
+
+    threading.Thread(target=reminder_loop, daemon=True).start()
+    log("reminder loop started")
 
     night_default = bool(config.get("goodnight", True))
     if groups:
@@ -738,10 +778,21 @@ def main() -> int:
                     if not chat_on:
                         log(f"luna: chat disabled, skip addressed key={cooldown_key}")
                         continue
+                    plain = chat.clean_text(content, data.get("attachments"))
+                    if is_sister_line and control_enabled("reminder", True):
+                        parsed = reminders.maybe_create(group_openid, user_id, speaker, plain)
+                        if parsed:
+                            answer = f"记下了。{reminders.format_due(parsed['due'])}，{parsed['text']}。"
+                            try:
+                                module.send_group_message(token, group_openid, answer, msg_id=message_id)
+                                log(f"reminder created key={cooldown_key} due={parsed['due']}")
+                                log_reply(group_openid, user_id, tier, speaker, plain, answer)
+                            except Exception as exc:
+                                log(f"reminder reply failed: {exc}")
+                            continue
                     if not chat_window():
                         log(f"luna: outside window, skip addressed key={cooldown_key}")
                         continue
-                    plain = chat.clean_text(content, data.get("attachments"))
                     if control_enabled("guard", True):
                         ok, reason = guard.content(plain)
                         if not ok:
@@ -753,7 +804,10 @@ def main() -> int:
                         log(f"luna: addressed cooldown key={cooldown_key}")
                         continue
                     last_luna[cooldown_key] = now
-                    recent = chat.history(group_openid, limit=8)
+                    tool = tools.run(plain) if control_enabled("tools", True) else None
+                    if tool:
+                        log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
+                    recent = chat.history(group_openid, limit=6)
                     context_lines = "\n".join(
                         f"{item.get('name') or '群友'}：{str(item.get('text', ''))[:60]}" for item in recent
                     )
@@ -764,9 +818,10 @@ def main() -> int:
                             context=context_lines,
                             sister=is_sister_line,
                             respect=tier == "owner" or luna.is_respected(plain),
-                            optional=True,
+                            optional=not tool,
                             source="mention",
                             profile=profiles.summary(user_id) if control_enabled("profile", True) else "",
+                            tool_result=tool[1] if tool else "",
                         )
                     except Exception as exc:
                         log(f"luna: addressed reply failed: {exc}")
@@ -948,6 +1003,18 @@ def main() -> int:
                     if now - last_luna.get(cooldown_key, 0.0) < LUNA_COOLDOWN:
                         log(f"luna: cooldown key={cooldown_key}")
                         continue
+
+                    if is_sister_line and control_enabled("reminder", True):
+                        parsed = reminders.maybe_create(group_openid, user_id, speaker, args)
+                        if parsed:
+                            answer = f"记下了。{reminders.format_due(parsed['due'])}，{parsed['text']}。"
+                            try:
+                                module.send_group_message(token, group_openid, answer, msg_id=message_id)
+                                log(f"reminder created key={cooldown_key} due={parsed['due']}")
+                                log_reply(group_openid, user_id, tier, speaker, args, answer)
+                            except Exception as exc:
+                                log(f"reminder reply failed: {exc}")
+                            continue
 
                     target_id = ""
                     target_name = ""
@@ -1137,6 +1204,9 @@ def main() -> int:
                             )
                             continue
                     try:
+                        tool = tools.run(args) if control_enabled("tools", True) else None
+                        if tool:
+                            log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
                         respect = (
                             (bool(target_id) and target_id in owners)
                             or (bool(user_id) and user_id in owners)
@@ -1156,6 +1226,7 @@ def main() -> int:
                             profile=profiles.summary(target_id or user_id)
                             if control_enabled("profile", True)
                             else "",
+                            tool_result=tool[1] if tool else "",
                         )
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(
