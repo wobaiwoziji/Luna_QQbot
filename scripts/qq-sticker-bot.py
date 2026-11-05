@@ -224,6 +224,16 @@ def chat_window(now: datetime | None = None) -> bool:
     return CHAT_START <= minutes < CHAT_END
 
 
+TOOL_LINES = ("搜到了。自己看。", "就这些。", "拿去。", "喏。")
+
+
+def tool_message(tool) -> str:
+    """B站列表原样发，避免模型改写标题和链接。"""
+    if tool and tool[0] == "bili":
+        return random.choice(TOOL_LINES) + "\n\n" + tool[1]
+    return ""
+
+
 def log_reply(group: str, user: str, tier: str, name: str, question: str, answer: str) -> None:
     try:
         REPLY_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -807,6 +817,14 @@ def main() -> int:
                     tool = tools.run(plain) if control_enabled("tools", True) else None
                     if tool:
                         log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
+                    direct = tool_message(tool)
+                    if direct:
+                        try:
+                            module.send_group_message(token, group_openid, direct, msg_id=message_id)
+                            log_reply(group_openid, user_id, tier, speaker, plain, direct)
+                        except Exception as exc:
+                            log(f"tool send failed: {exc}")
+                        continue
                     recent = chat.history(group_openid, limit=6)
                     context_lines = "\n".join(
                         f"{item.get('name') or '群友'}：{str(item.get('text', ''))[:60]}" for item in recent
@@ -1207,6 +1225,11 @@ def main() -> int:
                         tool = tools.run(args) if control_enabled("tools", True) else None
                         if tool:
                             log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
+                        direct = tool_message(tool)
+                        if direct:
+                            module.send_group_message(token, group_openid, direct, msg_id=message_id)
+                            log_reply(group_openid, user_id, tier, speaker, args, direct)
+                            continue
                         respect = (
                             (bool(target_id) and target_id in owners)
                             or (bool(user_id) and user_id in owners)

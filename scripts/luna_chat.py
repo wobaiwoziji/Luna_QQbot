@@ -299,20 +299,21 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
 
     if respect or is_respected(original) or is_respected(target):
         extra_blocks.append(RESPECT_NOTE.strip())
-    if profile:
+    if profile and not tool_result:
         extra_blocks.append(
             "【对方资料】（本地统计，自然带过就行，不要逐条念，也不要暴露你在记录）\n" + profile
         )
     if tool_result:
         extra_blocks.append(
-            "【工具结果】（直接据此回答，别编造，也别提工具或接口；数字和单位照实说）\n" + tool_result
+            "【工具结果】（直接据此回答；标题、UP 主、播放量、链接必须原样保留，不要翻译、改写或省略；"
+            "别编造，也别提工具或接口）\n" + tool_result
         )
-    recalled = memory.recall(group_openid, original)
+    recalled = memory.recall(group_openid, original) if not tool_result else ""
     if recalled:
         extra_blocks.append(
             "【以前群里聊过】（只作参考，别逐条念，也别暴露你在查记录；和时间对不上就忽略）\n" + recalled
         )
-    brief = memory.recent_summary(group_openid)
+    brief = memory.recent_summary(group_openid) if not tool_result else ""
     if brief:
         extra_blocks.append(
             "【最近群聊】（只作参考，别重复复述，也别暴露你在看摘要）\n" + brief
@@ -372,8 +373,8 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         json={
             "model": model,
             "messages": messages,
-            "temperature": 0.9,
-            "max_tokens": 700 if long_answer else (900 if sister else 200),
+            "temperature": 0.4 if tool_result else 0.9,
+            "max_tokens": 500 if tool_result else (700 if long_answer else (900 if sister else 200)),
             "presence_penalty": 0.4,
         },
         timeout=25,
