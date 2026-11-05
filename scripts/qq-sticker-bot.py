@@ -198,7 +198,7 @@ _control_state: dict[str, bool] = {}
 
 
 def control_enabled(name: str, default: bool = True) -> bool:
-    """Live switches written by the web workbench. Missing file/key means default."""
+    """从配置开关读取状态；文件或键不存在时用默认值。"""
     value = default
     try:
         data = json.loads(CONTROL_PATH.read_text(encoding="utf-8"))
@@ -247,7 +247,7 @@ _registered_groups: set[str] = set()
 
 
 def register_group(module, token_state: dict, group_openid: str) -> None:
-    """Remember groups the bot is added to, so the workbench can list them."""
+    """记录机器人加入的群，写进 logs/groups.json。"""
     group_openid = str(group_openid or "").strip()
     if not group_openid or group_openid in _registered_groups:
         return
@@ -286,7 +286,7 @@ def register_group(module, token_state: dict, group_openid: str) -> None:
 
 
 def control_groups(name: str, default_groups: list[str]) -> list[str]:
-    """Per-group selection written by the web workbench. Missing selection means default."""
+    """读取按群开关；没有配置时用默认群列表。"""
     all_groups = list(default_groups)
     try:
         registry = json.loads(GROUPS_PATH.read_text(encoding="utf-8"))
