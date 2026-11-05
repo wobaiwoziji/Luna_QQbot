@@ -215,6 +215,53 @@ def control_enabled(name: str, default: bool = True) -> bool:
 CHAT_START = 8 * 60
 CHAT_END = 22 * 60 + 30
 REPLY_LOG = LOG_DIR / "luna-replies.jsonl"
+LAST_SENT_PATH = LOG_DIR / "last-sent.json"
+LAST_SENT: dict[str, dict] = {}
+_sent_lock = threading.Lock()
+
+
+def load_last_sent() -> None:
+    try:
+        data = json.loads(LAST_SENT_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            LAST_SENT.update({str(k): v for k, v in data.items() if isinstance(v, dict)})
+    except Exception:
+        pass
+
+
+def save_last_sent() -> None:
+    try:
+        LAST_SENT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _sent_lock:
+            LAST_SENT_PATH.write_text(json.dumps(LAST_SENT, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def remember_sent(group: str, sent) -> None:
+    if not isinstance(sent, dict) or not sent.get("id"):
+        return
+    LAST_SENT[str(group)] = {"id": str(sent["id"]), "ts": time.time()}
+    save_last_sent()
+
+
+def install_send_tracking(module) -> None:
+    """包住发送函数，记下机器人最后一条消息的 ID。"""
+    original_message = module.send_group_message
+    original_image = module.send_group_image
+
+    def send_group_message(token, group_openid, content, *args, **kwargs):
+        sent = original_message(token, group_openid, content, *args, **kwargs)
+        remember_sent(group_openid, sent)
+        return sent
+
+    def send_group_image(token, group_openid, path, file_name, *args, **kwargs):
+        sent = original_image(token, group_openid, path, file_name, *args, **kwargs)
+        remember_sent(group_openid, sent)
+        return sent
+
+    module.send_group_message = send_group_message
+    module.send_group_image = send_group_image
 
 
 def chat_window(now: datetime | None = None) -> bool:
@@ -454,6 +501,8 @@ def main() -> int:
     sys.stderr = stream
 
     module = load_module("qq-group.py", "qq_group")
+    load_last_sent()
+    install_send_tracking(module)
     images = load_module("image_source.py", "image_source")
     chat = load_module("chat_log.py", "chat_log")
     summary = load_module("chat_summary.py", "chat_summary")
@@ -881,6 +930,29 @@ def main() -> int:
                                 module.send_group_message(token, group_openid, HELP_TEXT, msg_id=message_id)
                             except Exception as send_exc:
                                 log(f"help text failed: {send_exc}")
+                    continue
+
+                if cmd in ("撤回", "recall"):
+                    if not is_sister_line:
+                        continue
+                    entry = LAST_SENT.get(group_openid) or {}
+                    message_id = str(entry.get("id") or "")
+                    sent_at = float(entry.get("ts") or 0)
+                    if not message_id:
+                        module.send_group_message(token, group_openid, "没有可撤回的消息。", msg_id=None)
+                        continue
+                    if time.time() - sent_at > 115:
+                        module.send_group_message(token, group_openid, "超过两分钟，撤不回了。", msg_id=None)
+                        continue
+                    try:
+                        module.recall_group_message(token, group_openid, message_id)
+                        LAST_SENT.pop(group_openid, None)
+                        save_last_sent()
+                        module.send_group_message(token, group_openid, "撤了。", msg_id=None, msg_seq=2)
+                        log(f"recalled last message group={group_openid[:8]}")
+                    except Exception as exc:
+                        log(f"recall failed: {exc}")
+                        module.send_group_message(token, group_openid, "撤不回了。", msg_id=None)
                     continue
 
                 if cmd == "聊天总结":

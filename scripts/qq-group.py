@@ -260,6 +260,11 @@ def send_group_file(token: str, group_openid: str, path: Path, file_name: str) -
     return result
 
 
+def recall_group_message(token: str, group_openid: str, message_id: str) -> dict:
+    """撤回机器人自己发的消息；QQ 只允许 2 分钟内。"""
+    return group_request("DELETE", f"/v2/groups/{group_openid}/messages/{message_id}", token)
+
+
 def send_group_image(
     token: str,
     group_openid: str,
