@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import operator
 import re
 import time
@@ -15,6 +16,11 @@ import requests
 WEATHER_WORDS = re.compile(r"(天气|气温|温度|下雨|带伞|冷不冷|热不热)")
 CALC_WORDS = re.compile(r"(算一下|算算|计算|等于多少|多少)")
 TIME_WORDS = re.compile(r"(几点|现在时间|今天几号|日期|星期几|周几)")
+BILI_WORDS = re.compile(r"(b站|B站|哔哩哔哩|哔哩|小破站)", re.I)
+BILI_QUERY = re.compile(
+    r"(?:b站|哔哩哔哩|哔哩|小破站)\s*(?:上)?\s*(?:搜|找|查|看看|有没有|推荐)?\s*(?:一下|下)?\s*(.+)",
+    re.I,
+)
 CITY_AFTER = re.compile(r"(?:天气|气温|温度)[^\u4e00-\u9fa5]*([\u4e00-\u9fa5]{2,8})")
 CITY_BEFORE = re.compile(r"([\u4e00-\u9fa5]{2,8})(?:今天|明天|现在)?(?:的)?(?:天气|气温|温度|下雨)")
 SKIP_CITY = {"今天", "明天", "现在", "外面", "这里", "那里", "天气", "气温", "温度", "多少", "怎么样"}
@@ -33,9 +39,72 @@ OPS = {
     ast.UAdd: operator.pos,
 }
 
+BILI_CACHE: dict[str, tuple[float, str]] = {}
+BILI_TTL = 300
+
 
 def log(message: str) -> None:
     print(f"[tools] {message}", flush=True)
+
+
+def _play(value) -> str:
+    try:
+        number = int(value)
+    except Exception:
+        return "?"
+    if number >= 100_000_000:
+        return f"{number / 100_000_000:.1f}亿"
+    if number >= 10_000:
+        return f"{number / 10_000:.1f}万"
+    return str(number)
+
+
+def bili_search(word: str) -> str:
+    word = re.sub(r"(的)?(视频|相关)$", "", (word or "").strip()).strip()
+    if not word or word in ("分享", "视频", "直播", "更新"):
+        return "没说要搜什么，问一下关键词。"
+    cached = BILI_CACHE.get(word)
+    if cached and time.time() - cached[0] < BILI_TTL:
+        return cached[1]
+    try:
+        response = requests.get(
+            "https://api.bilibili.com/x/web-interface/search/all/v2",
+            params={"keyword": word, "page": 1},
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"},
+            timeout=20,
+        )
+        data = response.json()
+        videos = []
+        for block in (data.get("data") or {}).get("result") or []:
+            if block.get("result_type") != "video":
+                continue
+            videos = block.get("data") or []
+            break
+        videos = [
+            item for item in (videos or [])
+            if item.get("bvid") and item.get("title")
+        ][:3]
+        if not videos:
+            return f"B站没搜到「{word}」。"
+        lines = [f"B站搜「{word}」："]
+        for index, video in enumerate(videos, 1):
+            title = html.unescape(re.sub(r"<[^>]+>", "", str(video.get("title") or ""))).strip()
+            author = str(video.get("author") or "未知 UP")
+            duration = str(video.get("duration") or "")
+            lines.append(
+                f"{index}. {title} — {author}，{_play(video.get('play'))}播放"
+                + (f"，{duration}" if duration else "")
+            )
+            lines.append(f"   https://www.bilibili.com/video/{video.get('bvid')}")
+        result = "\n".join(lines)
+        BILI_CACHE[word] = (time.time(), result)
+        if len(BILI_CACHE) > 100:
+            for key in list(BILI_CACHE)[:50]:
+                BILI_CACHE.pop(key, None)
+        return result
+    except Exception as exc:
+        log(f"bili search failed: {exc}")
+        return "B站搜索失败，可能被限流了。"
 
 
 def weather(city: str, tomorrow: bool = False) -> str:
@@ -127,6 +196,12 @@ def run(text: str) -> tuple[str, str] | None:
     value = (text or "").strip()
     if not value:
         return None
+    if BILI_WORDS.search(value):
+        matched = BILI_QUERY.search(value)
+        word = matched.group(1).strip() if matched else ""
+        word = re.sub(r"(的)?(视频|相关)$", "", word).strip()
+        if word not in ("一下", "下", "分享", "视频", "直播", "更新"):
+            return "bili", bili_search(word)
     if WEATHER_WORDS.search(value):
         city = ""
         match = CITY_BEFORE.search(value) or CITY_AFTER.search(value)

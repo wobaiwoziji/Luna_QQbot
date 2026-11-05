@@ -317,7 +317,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         extra_blocks.append(
             "【最近群聊】（只作参考，别重复复述，也别暴露你在看摘要）\n" + brief
         )
-    if original and is_lore(original):
+    if not tool_result and original and is_lore(original):
         long_answer = True
         extra_blocks.append((LORE_NOTE + load_lore()).strip())
         fetched = web_lore(original) or web_search(original)
@@ -328,7 +328,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
             log(f"lore web hit key={group_openid} chars={len(fetched)}")
         else:
             log(f"lore web miss key={group_openid}")
-    elif original and (SEARCH_PATTERN.search(original) or (
+    elif not tool_result and original and (SEARCH_PATTERN.search(original) or (
         re.search(r'(更多|详细|继续|还有|补充)', original) and _last_query.get(group_openid)
     )):
         query = original
