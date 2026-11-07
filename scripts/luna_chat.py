@@ -421,7 +421,7 @@ def _image_part(path) -> dict:
     }
 
 
-def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "") -> str | None:
+def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "", target_card: str = "") -> str | None:
     _load_history(group_openid)
     original = (text or "").strip()[:MAX_INPUT]
     if not original and not context:
@@ -451,6 +451,9 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         return answer
 
     identity_ask = bool(original) and is_identity_question(original) and (sister or bool(role_card))
+    target_ask = bool(target_card) and bool(
+        re.search(r"(他|她|这个人|这人|那位|对方).{0,4}(是谁|什么身份|哪位|认得|认识)|是谁", original)
+    )
 
     prompt = original or "评价一下这个人"
     if optional and not identity_ask:
@@ -488,6 +491,15 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         extra_blocks.append(
             "【对方资料】（本地统计，自然带过就行，不要逐条念，也不要暴露你在记录）\n" + profile
         )
+    if target_card:
+        who = f"「{target}」" if target else "被 @ 的人"
+        extra_blocks.append(
+            f"【被提到的人】群里被 @ 的人是{who}，不是当前说话的人。"
+            "如果说话的人在问「他是谁 / 这个人是谁」，直接用这个身份回答，不要说自己没有记录。\n"
+            + target_card.strip()
+        )
+    elif target:
+        extra_blocks.append(f"【被提到的人】群里被 @ 的人是「{target}」，不是当前说话的人。")
     if tool_result:
         extra_blocks.append(
             "【工具结果】（直接据此回答；标题、UP 主、播放量、链接必须原样保留，不要翻译、改写或省略；"
@@ -503,7 +515,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         extra_blocks.append(
             "【最近群聊】（只作参考，别重复复述，也别暴露你在看摘要）\n" + brief
         )
-    if not tool_result and original and is_lore(original):
+    if not tool_result and not target_ask and original and is_lore(original):
         long_answer = True
         extra_blocks.append((LORE_NOTE + load_lore()).strip())
         fetched = web_lore(original) or web_search(original)
@@ -514,7 +526,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
             log(f"lore web hit key={group_openid} chars={len(fetched)}")
         else:
             log(f"lore web miss key={group_openid}")
-    elif not identity_ask and original and (SEARCH_PATTERN.search(original) or (
+    elif not identity_ask and not target_ask and original and (SEARCH_PATTERN.search(original) or (
         re.search(r'(更多|详细|继续|还有|补充)', original) and _last_query.get(group_openid)
     )):
         query = original

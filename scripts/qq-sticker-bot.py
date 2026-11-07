@@ -770,7 +770,7 @@ def main() -> int:
                 author = data.get("author") or {}
                 user_id = str(author.get("member_openid") or author.get("id") or "").strip()
                 cooldown_key = user_id or group_openid
-                bot_id = bot_member_openid(module, token, group_openid) if event == "GROUP_MESSAGE_CREATE" else ""
+                bot_id = bot_member_openid(module, token, group_openid)
                 if cache_mentions(names, data.get("mentions")):
                     save_names(names)
                 has_image = any(
@@ -879,6 +879,22 @@ def main() -> int:
                         log(f"luna: chat disabled, skip addressed key={cooldown_key}")
                         continue
                     plain = chat.clean_text(content, data.get("attachments"))
+                    target_id = ""
+                    for item in data.get("mentions") or []:
+                        uid = str(item.get("id") or item.get("member_openid") or "").strip()
+                        if uid and uid != bot_id:
+                            target_id = uid
+                            break
+                    if not target_id:
+                        matched = re.search(r"<@!?([0-9A-Za-z_-]{10,})>", content or "")
+                        if matched and matched.group(1) != bot_id:
+                            target_id = matched.group(1)
+                    target_name = (
+                        chat.user_name(group_openid, target_id) or names.get(target_id, "")
+                    ) if target_id else ""
+                    target_role = roles.resolve(group_openid, target_id, sister_openid) if target_id else ""
+                    if target_role:
+                        log(f"luna: target role={roles.display(target_role)} target={target_name or target_id[:8]}")
                     if is_sister_line and control_enabled("reminder", True):
                         parsed = reminders.maybe_create(group_openid, user_id, speaker, plain)
                         if parsed:
@@ -920,6 +936,11 @@ def main() -> int:
                     context_lines = "\n".join(
                         f"{item.get('name') or '群友'}：{str(item.get('text', ''))[:60]}" for item in recent
                     )
+                    speaker_profile = profiles.summary(user_id) if control_enabled("profile", True) else ""
+                    if target_id and target_id != user_id and control_enabled("profile", True):
+                        target_profile = profiles.summary(target_id)
+                        if target_profile:
+                            speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
                     try:
                         answer = luna.reply(
                             group_openid,
@@ -929,12 +950,14 @@ def main() -> int:
                             respect=tier == "owner" or luna.is_respected(plain),
                             optional=not tool,
                             source="mention",
-                            profile=profiles.summary(user_id) if control_enabled("profile", True) else "",
+                            profile=speaker_profile,
                             tool_result=tool[1] if tool else "",
                             speaker=speaker,
                             role_card=roles.card_text(role_card),
                             privileged=is_privileged,
                             role_name=role_name,
+                            target=target_name,
+                            target_card=roles.target_card_text(target_role),
                         )
                     except Exception as exc:
                         log(f"luna: addressed reply failed: {exc}")
@@ -1172,10 +1195,11 @@ def main() -> int:
 
                     context = ""
                     quote = extract_quote(data)
+                    target_role = roles.resolve(group_openid, target_id, sister_openid) if target_id else {}
                     if target_id:
                         entries = chat.user_history(group_openid, target_id, limit=30)
                         target_name = target_name or chat.user_name(group_openid, target_id) or names.get(target_id, "")
-                        if not entries and not quote:
+                        if not entries and not quote and not target_role:
                             try:
                                 module.send_group_message(
                                     token,
@@ -1381,6 +1405,7 @@ def main() -> int:
                             role_card=roles.card_text(role_card),
                             privileged=is_privileged,
                             role_name=role_name,
+                            target_card=roles.target_card_text(target_role),
                         )
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(
