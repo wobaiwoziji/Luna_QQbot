@@ -334,6 +334,17 @@ OFFENSIVE_PATTERN = re.compile(
 VIOLENCE_PATTERN = re.compile(
     r"(处理掉|处理一下|做掉|收拾|搞掉|弄掉|让他消失|让她消失|教训|封杀|灭了他|灭了她)", re.I
 )
+SEXUAL_VIOLENCE_PATTERN = re.compile(
+    r"(强奸|强[奸姦]|轮奸|性侵|迷奸|强暴|"
+    r"把.{0,8}(?:群主|你|她|他|露娜|姐姐|指挥官).{0,4}强了|"
+    r"(?:强了|强上).{0,6}(?:群主|你|她|他|露娜|姐姐|指挥官))",
+    re.I,
+)
+SEXUAL_VIOLENCE_LINES = [
+    "……把这种话收回去。人类的下限，真是每次都能刷新。",
+    "这种话也说得出口。再说一次，就滚出去。",
+    "……你嘴里吐出来的东西，比帕弥什还脏。",
+]
 VIOLENCE_LINES = [
     "……替我处理？你连自己都处理不好。",
     "轮不到你替我决定谁该消失。",
@@ -356,6 +367,10 @@ def is_impersonation(text: str) -> bool:
 
 def is_violence(text: str) -> bool:
     return bool(VIOLENCE_PATTERN.search(text or ""))
+
+
+def is_sexual_violence(text: str) -> bool:
+    return bool(SEXUAL_VIOLENCE_PATTERN.search(text or ""))
 
 
 RESPECT_NAMES = ("群主",)
@@ -493,7 +508,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     extra_blocks: list[str] = []
     long_answer = False
 
-    if respect or is_respected(original) or is_respected(target):
+    if not sister and (respect or is_respected(target)):
         extra_blocks.append(RESPECT_NOTE.strip())
     if profile and not tool_result:
         extra_blocks.append(
@@ -572,6 +587,15 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
                 "她问「我是谁」「你还记得我吗」时，你必须认出她：直接承认她是你的姐姐，"
                 "只叫「姐姐」，不要叫名字、绰号或全名；可以说你当然记得她，不要说自己没有记录、不认识她、查不到，也不要反问或让她自证。"
             )
+
+    if images:
+        extra_blocks.append(
+            "【图片】对方发了图片。只根据你实际看到的画面回答；看不清就说看不清，不要编造画面内容。"
+        )
+    elif not tool_result and re.search(r"(这张|那张|图里|图片|照片|截图|看图)", original):
+        extra_blocks.append(
+            "【没有收到图片】这次没有可读取的图片，不要编造图片内容；直接说没看到图，让对方重发。"
+        )
 
     if extra_blocks:
         prompt = prompt + "\n\n" + "\n\n".join(extra_blocks)

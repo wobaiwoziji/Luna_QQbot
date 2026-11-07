@@ -118,19 +118,19 @@ def extract_quote(data: dict, limit: int = 300) -> str:
     return joined[:limit]
 
 
-def punish(module, token: str, group_openid: str, user_id: str, message_id: str | None, penalties: dict, line: str) -> None:
-    """先回一句，再尝试真禁言；没权限就本地禁言一小时。"""
+def punish(module, token: str, group_openid: str, user_id: str, message_id: str | None, penalties: dict, line: str, minutes: int = TASK_MUTE_MINUTES) -> None:
+    """先回一句，再尝试真禁言；没权限就本地禁言。"""
     try:
         module.send_group_message(token, group_openid, line, msg_id=message_id)
     except Exception as exc:
         log(f"penalty notice failed: {exc}")
     try:
-        module.mute_group_member(token, group_openid, user_id, TASK_MUTE_MINUTES)
-        log(f"penalty: muted user={user_id} {TASK_MUTE_MINUTES}min")
+        module.mute_group_member(token, group_openid, user_id, minutes)
+        log(f"penalty: muted user={user_id} {minutes}min")
         return
     except Exception as exc:
         log(f"penalty: mute failed user={user_id} ({exc}), 本地禁言兜底")
-    penalties[user_id] = time.time() + TASK_MUTE_MINUTES * 60
+    penalties[user_id] = time.time() + minutes * 60
 
 
 NAMES_PATH = LOG_DIR / "names.json"
@@ -776,7 +776,7 @@ def main() -> int:
                 has_image = any(
                     str(item.get("content_type") or "").lower().startswith("image")
                     for item in (data.get("attachments") or [])
-                )
+                ) or bool(jelly.deep_image_urls(data))
                 direct_call = bool(re.match(r"^\s*露娜\s*[，,：:！!]\s*\S+", content or ""))
                 implicit_luna = (bool(has_image) and "露娜" in content) or direct_call
                 command = parse_command(content)
@@ -915,6 +915,19 @@ def main() -> int:
                             log(f"guard content group={group_openid[:8]} user={user_id[:8]} reason={reason}")
                             guard.record(group_openid, user_id, reason, plain)
                             continue
+                    if not is_sister_line and luna.is_sexual_violence(plain):
+                        log(f"luna: sexual violence key={cooldown_key} text={plain[:40]!r}")
+                        punish(
+                            module,
+                            token,
+                            group_openid,
+                            user_id,
+                            message_id,
+                            penalties,
+                            random.choice(luna.SEXUAL_VIOLENCE_LINES),
+                            minutes=10,
+                        )
+                        continue
                     now = time.time()
                     sister_identity = is_sister_line and luna.is_identity_question(plain)
                     if not sister_identity and now - last_luna.get(cooldown_key, 0.0) < LUNA_COOLDOWN:
@@ -941,13 +954,38 @@ def main() -> int:
                         target_profile = profiles.summary(target_id)
                         if target_profile:
                             speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
+                    image_paths = []
+                    if has_image:
+                        try:
+                            urls = jelly.image_urls(data.get("attachments"))[:2] or jelly.deep_image_urls(data)[:2]
+                            for index, url in enumerate(urls):
+                                target = ROOT / "logs" / "luna-images" / f"{message_id}-{index}.jpg"
+                                target.parent.mkdir(parents=True, exist_ok=True)
+                                downloaded = requests.get(
+                                    url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20
+                                )
+                                downloaded.raise_for_status()
+                                target.write_bytes(downloaded.content)
+                                image_paths.append(target)
+                            if image_paths:
+                                log(f"luna: images={len(image_paths)} group={group_openid[:8]}")
+                        except Exception as exc:
+                            log(f"luna mention image download failed: {exc}")
+                        if not image_paths:
+                            try:
+                                module.send_group_message(
+                                    token, group_openid, "……图没收到。重发一次。", msg_id=message_id
+                                )
+                            except Exception as exc:
+                                log(f"luna image hint failed: {exc}")
+                            continue
                     try:
                         answer = luna.reply(
                             group_openid,
                             plain,
                             context=context_lines,
                             sister=is_sister_line,
-                            respect=tier == "owner" or luna.is_respected(plain),
+                            respect=tier == "owner" or user_id in owners or luna.is_respected(speaker),
                             optional=not tool,
                             source="mention",
                             profile=speaker_profile,
@@ -958,6 +996,7 @@ def main() -> int:
                             role_name=role_name,
                             target=target_name,
                             target_card=roles.target_card_text(target_role),
+                            images=image_paths,
                         )
                     except Exception as exc:
                         log(f"luna: addressed reply failed: {exc}")
@@ -1253,7 +1292,7 @@ def main() -> int:
 
                     image_paths = []
                     try:
-                        urls = jelly.deep_image_urls(data)[:2]
+                        urls = jelly.image_urls(data.get("attachments"))[:2] or jelly.deep_image_urls(data)[:2]
                         for index, url in enumerate(urls):
                             target = ROOT / "logs" / "luna-images" / f"{message_id}-{index}.jpg"
                             target.parent.mkdir(parents=True, exist_ok=True)
@@ -1278,6 +1317,19 @@ def main() -> int:
                             log(f"luna usage hint failed: {exc}")
                         continue
                     last_luna[cooldown_key] = now
+                    if not is_sister_line and luna.is_sexual_violence(args):
+                        log(f"luna: sexual violence key={cooldown_key} args={args[:40]!r}")
+                        punish(
+                            module,
+                            token,
+                            group_openid,
+                            user_id,
+                            message_id,
+                            penalties,
+                            random.choice(luna.SEXUAL_VIOLENCE_LINES),
+                            minutes=10,
+                        )
+                        continue
                     if target_id and not is_sister_line and luna.is_offensive(args):
                         log(f"luna: offensive request key={cooldown_key} args={args[:30]}")
                         punish(
