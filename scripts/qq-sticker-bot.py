@@ -1435,25 +1435,42 @@ def main() -> int:
 
                     delivered = 0
                     for index, path in enumerate(paths):
-                        try:
-                            seq = progress.next_seq()
-                            result = module.send_group_image(
-                                token,
-                                group_openid,
-                                path,
-                                path.name,
-                                msg_id=message_id,
-                                msg_seq=seq,
-                            )
-                            delivered += 1
-                            log(f"image sent {path.name} tags={tags} seq={seq} id={result.get('id')}")
-                        except Exception as exc:
-                            log(f"image send failed {path.name}: {exc}")
+                        for attempt in range(2):
+                            try:
+                                seq = progress.next_seq()
+                                result = module.send_group_image(
+                                    token,
+                                    group_openid,
+                                    path,
+                                    path.name,
+                                    msg_id=message_id,
+                                    msg_seq=seq,
+                                )
+                                delivered += 1
+                                log(
+                                    f"image sent {path.name} tags={tags} seq={seq} "
+                                    f"id={result.get('id')}"
+                                )
+                                break
+                            except Exception as exc:
+                                log(f"image send failed {path.name} try={attempt + 1}: {exc}")
+                                time.sleep(1.0)
                         if index + 1 < len(paths):
                             time.sleep(0.6)
                     if delivered:
                         last_image_reply[cooldown_key] = time.time()
                         log(f"image: cooldown starts key={cooldown_key} {IMAGE_COOLDOWN}s")
+                    else:
+                        try:
+                            module.send_group_message(
+                                token,
+                                group_openid,
+                                "……图没发出去，再发一次。",
+                                msg_id=message_id,
+                                msg_seq=progress.next_seq(),
+                            )
+                        except Exception as exc:
+                            log(f"image: fail notice failed: {exc}")
                 finally:
                     progress.finish()
                     inflight.discard(cooldown_key)
