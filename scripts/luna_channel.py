@@ -183,6 +183,72 @@ def fetch_acg() -> dict:
         except Exception as exc:
             last = f"{type(exc).__name__}: {exc}"
             time.sleep(2)
+
+    # yande 不通时退到 konachan.net，同样带 author
+    try:
+        response = requests.get(
+            "https://konachan.net/post.json",
+            params={"tags": "rating:safe order:random", "limit": 40},
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://konachan.net/"},
+            timeout=25,
+        )
+        items = response.json()
+        random.shuffle(items)
+        for item in items:
+            if not item.get("author") or not item.get("file_url"):
+                continue
+            if item.get("file_ext") not in ("jpg", "jpeg", "png"):
+                continue
+            if int(item.get("width") or 0) < 900:
+                continue
+            path = download(item["file_url"], "https://konachan.net/")
+            return {
+                "path": path,
+                "author": str(item.get("author")),
+                "source": f"konachan:{item.get('id')}",
+                "tags": str(item.get("tags") or ""),
+            }
+    except Exception as exc:
+        last += f" | konachan: {type(exc).__name__}: {exc}"
+
+    # 再退到 safebooru；作者信息可能缺失
+    try:
+        response = requests.get(
+            "https://safebooru.org/index.php",
+            params={
+                "page": "dapi",
+                "s": "post",
+                "q": "index",
+                "json": "1",
+                "tags": "rating:safe order:random",
+                "limit": 40,
+            },
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://safebooru.org/"},
+            timeout=30,
+        )
+        items = response.json()
+        random.shuffle(items)
+        for item in items:
+            url = item.get("file_url") or item.get("sample_url")
+            if not url or int(item.get("width") or 0) < 900:
+                continue
+            path = download(url, "https://safebooru.org/")
+            return {
+                "path": path,
+                "author": "",
+                "source": f"safebooru:{item.get('id')}",
+                "tags": str(item.get("tags") or ""),
+            }
+    except Exception as exc:
+        last += f" | safebooru: {type(exc).__name__}: {exc}"
+
+    # 最后用本地备选图
+    local = ROOT / "picture" / "acg"
+    if local.exists():
+        files = [p for p in local.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXT]
+        if files:
+            path = random.choice(files)
+            return {"path": path, "author": "", "source": f"local:{path.name}", "tags": ""}
     raise RuntimeError(f"美图抓取失败: {last}")
 
 
@@ -328,6 +394,8 @@ def compose(slot: str, info: dict, author: str) -> tuple[str, str]:
         body = roast if roast and roast != what else "看图。"
     if author:
         body += f"\n画师：{author}"
+    else:
+        body += "\n画师：不详"
     return clean(title, 40), body[:120]
 
 
@@ -343,7 +411,7 @@ def post_slot(slot: str, force: bool = False, dry_run: bool = False) -> dict:
     key = slot_key(slot)
     if not force and state.get("posts", {}).get(key):
         return {"slot": slot, "status": "done"}
-    if not force and time.time() - float((state.get("fails") or {}).get(key) or 0) < 1200:
+    if not force and time.time() - float((state.get("fails") or {}).get(key) or 0) < 300:
         return {"slot": slot, "status": "cooldown"}
     if not force and not slot_due(slot):
         return {"slot": slot, "status": "not_due"}
@@ -475,7 +543,7 @@ def comment_once(force: bool = False, dry_run: bool = False) -> dict:
 
     channels = config_channels()
     cutoff = time.time() - 14 * 86400
-    skip_words = ("露娜", "bot", "机器人", "公告", "测试")
+    skip_words = ("露娜", "升格网络", "bot", "机器人", "公告", "测试")
     candidates = []
     for channel_id in channels["comment"] or [channels["image"], channels["meme"]]:
         if not channel_id:
