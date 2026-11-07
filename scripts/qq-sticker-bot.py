@@ -511,6 +511,7 @@ def main() -> int:
     help_card = load_module("qq-help-card.py", "help_card")
     luna = load_module("luna_chat.py", "luna_chat")
     proactive = load_module("luna_proactive.py", "luna_proactive")
+    welcome = load_module("luna_welcome.py", "luna_welcome")
     bili = load_module("luna_bili.py", "luna_bili")
     channel = load_module("luna_channel.py", "luna_channel")
     memory = load_module("memory.py", "memory")
@@ -561,6 +562,13 @@ def main() -> int:
 
         threading.Thread(target=proactive_loop, daemon=True).start()
         log(f"proactive loop started groups={len(proactive_groups)}")
+
+    try:
+        for gid in groups:
+            seen_count = welcome.seed(gid)
+            log(f"welcome seed group={gid[:8]} members={seen_count}")
+    except Exception as exc:
+        log(f"welcome seed failed: {exc}")
 
     bili_groups = config.get("biliGroups")
     if not isinstance(bili_groups, list):
@@ -814,6 +822,29 @@ def main() -> int:
 
                 if control_enabled("pause", False):
                     continue
+
+                if (
+                    user_id
+                    and user_id != bot_id
+                    and not is_command
+                    and tier == "member"
+                    and event != "GROUP_AT_MESSAGE_CREATE"
+                    and "露娜" not in content
+                    and (not bot_id or f"<@{bot_id}>" not in content)
+                    and control_enabled("welcome", True)
+                    and welcome.is_new(group_openid, user_id)
+                    and welcome.size(group_openid) >= welcome.MIN_MEMBERS
+                    and not welcome.too_soon(group_openid)
+                ):
+                    text = welcome.greet(speaker, group_openid)
+                    try:
+                        module.send_group_message(
+                            token, group_openid, text, msg_id=message_id, msg_seq=2
+                        )
+                        welcome.mark_welcome(group_openid)
+                        log(f"welcome sent group={group_openid[:8]} user={user_id[:8]} text={text!r}")
+                    except Exception as exc:
+                        log(f"welcome failed group={group_openid[:8]}: {exc}")
 
                 if event == "GROUP_MESSAGE_CREATE":
                     member = bot_id
