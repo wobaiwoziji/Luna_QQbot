@@ -18,6 +18,7 @@ from PIL import Image
 
 import chat_log
 import luna_chat
+import luna_roles
 import token_usage
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -205,15 +206,19 @@ def run_once(module, groups: list[str], token_state: dict, sister_openid: str = 
             entry["last_check"] = int(fresh[-1].get("ts", now))
             continue
 
-        sister_present = bool(sister_openid) and any(
-            str(item.get("user", "")) == sister_openid for item in fresh[-40:]
-        )
+        def role_of(item):
+            return luna_roles.resolve(group, str(item.get("user", "")), sister_openid)
+
+        sister_present = any(luna_roles.is_sister(role_of(item)) for item in fresh[-40:])
         lines = []
         for item in fresh[-40:]:
-            is_sister_line = bool(sister_openid) and str(item.get("user", "")) == sister_openid
+            role = role_of(item)
+            is_sister_line = luna_roles.is_sister(role)
             is_owner = str(item.get("role") or "").lower() == "owner"
             if is_sister_line:
-                name = "姐姐"
+                name = luna_roles.display(role) or "姐姐"
+            elif role:
+                name = luna_roles.display(role) or "群友"
             elif is_owner:
                 name = "群主"
             else:
