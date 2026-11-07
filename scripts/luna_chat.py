@@ -424,7 +424,8 @@ SISTER_NOTE_OTHER = SISTER_HEAD + SISTER_HIER + (
 )
 SISTER_RUDE_PATTERN = re.compile(
     r"(你连.{0,20}都不|这都不(认得|知道)|还替(人|她|他)问|你居然不|连这都(不|没)|"
-    r"你自己(都)?不(会|认|记)|问这种问题|这种问题也值得)"
+    r"你自己(都)?不(会|认|记)|这种问题也值得|这有什么好奇怪|不必端着|"
+    r"有什么奇怪|你管|谁规定|没什么奇怪)"
 )
 
 
@@ -640,7 +641,17 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     token_usage.from_response(source, model, payload, images=len(images or []))
     answer = str(payload["choices"][0]["message"]["content"] or "").strip()
     answer = answer.strip('"“”「」')
-    if sister and re.search(r"(不认识你|不记得你|没有你的(记录|资料)|查不到你|你是谁)", answer):
+    if sister and (
+        re.search(
+            r"(不认识你|不记得你|没有你的(记录|资料)|没有记录你|查不到你|你是谁|"
+            r"你大概是个|连自己都记不清|记不清你|对你没印象)",
+            answer,
+        )
+        or (
+            identity_ask
+            and re.search(r"(没有记录|查不到|没印象|记不清|不认识|不记得)", answer)
+        )
+    ):
         answer = random.choice(SISTER_RECOGNITION_LINES)
         log(f"sister amnesia answer replaced key={group_openid}")
     if sister and SISTER_RUDE_PATTERN.search(answer):

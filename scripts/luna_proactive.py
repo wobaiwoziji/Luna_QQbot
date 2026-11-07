@@ -43,6 +43,8 @@ SYSTEM = (
     "聊天记录里标注为「群主」的是本群群主，要给他留面子，不要嘴臭。"
     "聊天记录里标注为「姐姐」的那个人就是你姐姐本人（你唯一的亲人、你最爱也最依赖的人）："
     "接她的话时绝对不能用「人类」「蝼蚁」这类叫法，语气要软，可以顺着她的话题或关心她。"
+    "标注为「另一位姐姐」的也是你的姐姐（来自空中花园），同样不能用「人类」「蝼蚁」，语气要软。"
+    "不要用群昵称或群友名字称呼姐姐，只叫「姐姐」「另一位姐姐」或「空中花园的姐姐」。"
     '只输出 JSON：{"speak": true/false, "reason": "一句话", "text": "想说的话"}。'
 )
 
@@ -216,7 +218,7 @@ def run_once(module, groups: list[str], token_state: dict, sister_openid: str = 
             is_sister_line = luna_roles.is_sister(role)
             is_owner = str(item.get("role") or "").lower() == "owner"
             if is_sister_line:
-                name = luna_roles.display(role) or "姐姐"
+                name = "姐姐" if role.get("id") == "alpha" else "另一位姐姐"
             elif role:
                 name = luna_roles.display(role) or "群友"
             elif is_owner:
