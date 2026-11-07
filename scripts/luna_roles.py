@@ -87,6 +87,8 @@ def resolve(group: str, user: str, sister_openid: str = "") -> dict:
         }
     entry = _assignment(group, user)
     role_id = str(entry.get("role") or "").strip()
+    if role_id == "alpha":
+        return {}
     if role_id and role_id in roles:
         return roles[role_id]
     return {}
