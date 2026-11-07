@@ -54,15 +54,16 @@ MAX_IMAGES = 2
 BOT_STATE_TTL = 600
 _group_states: dict[str, tuple[dict, float]] = {}
 
-HELP_URL = ""
+HELP_URL = "https://luna-site-d0gj36nib486137a4-1524033896.tcloudbaseapp.com/index.html"
 
 HINT_TEXT = (
-    "没找到「{name}」的图。可以试 IP_角色名，也可以直接给英文 tag。"
+    "没找到「{name}」的图。可以试 IP_角色名，比如 原神_雷电将军、东方_灵梦，"
+    "也可以直接给英文 tag，比如 raiden_shogun。"
 )
 
 HELP_TEXT = (
-    "露娜 指令（@我 + /指令）\n"
-    "· /找图 角色名 [1|2]：例 /找图 角色名 2、/找图 随机图（每人 5 分钟）\n"
+    "🤖 升格网络 指令（@我 + /指令）\n"
+    "· /找图 角色名 [1|2]：例 /找图 灵梦 2、/找图 随机图（每人 5 分钟）\n"
     "· /聊天总结：当日群聊要点卡片（每群 10 分钟，至少 5 条）\n"
     "· /露娜 想说的话：让露娜用她的口吻回你（每人 20 秒）\n"
     "· /q弹：发图片或引用图片 + /q弹 → 生成循环动图（每人 60 秒）\n"
@@ -198,7 +199,7 @@ _control_state: dict[str, bool] = {}
 
 
 def control_enabled(name: str, default: bool = True) -> bool:
-    """从配置开关读取状态；文件或键不存在时用默认值。"""
+    """Live switches written by the web workbench. Missing file/key means default."""
     value = default
     try:
         data = json.loads(CONTROL_PATH.read_text(encoding="utf-8"))
@@ -304,7 +305,7 @@ _registered_groups: set[str] = set()
 
 
 def register_group(module, token_state: dict, group_openid: str) -> None:
-    """记录机器人加入的群，写进 logs/groups.json。"""
+    """Remember groups the bot is added to, so the workbench can list them."""
     group_openid = str(group_openid or "").strip()
     if not group_openid or group_openid in _registered_groups:
         return
@@ -343,7 +344,7 @@ def register_group(module, token_state: dict, group_openid: str) -> None:
 
 
 def control_groups(name: str, default_groups: list[str]) -> list[str]:
-    """读取按群开关；没有配置时用默认群列表。"""
+    """Per-group selection written by the web workbench. Missing selection means default."""
     all_groups = list(default_groups)
     try:
         registry = json.loads(GROUPS_PATH.read_text(encoding="utf-8"))
@@ -523,7 +524,6 @@ def main() -> int:
     app_id = str(config.get("appId", "")).strip()
     client_secret = str(config.get("clientSecret", "")).strip()
     sister_openid = str(config.get("sisterOpenid") or config.get("userOpenid") or "").strip()
-    help_url = str(config.get("helpUrl") or "").strip()
     if not app_id or not client_secret:
         log("config 缺少 appId/clientSecret")
         return 1
@@ -859,7 +859,8 @@ def main() -> int:
                             guard.record(group_openid, user_id, reason, plain)
                             continue
                     now = time.time()
-                    if now - last_luna.get(cooldown_key, 0.0) < LUNA_COOLDOWN:
+                    sister_identity = is_sister_line and luna.is_identity_question(plain)
+                    if not sister_identity and now - last_luna.get(cooldown_key, 0.0) < LUNA_COOLDOWN:
                         log(f"luna: addressed cooldown key={cooldown_key}")
                         continue
                     last_luna[cooldown_key] = now
@@ -889,6 +890,7 @@ def main() -> int:
                             source="mention",
                             profile=profiles.summary(user_id) if control_enabled("profile", True) else "",
                             tool_result=tool[1] if tool else "",
+                            speaker=speaker,
                         )
                     except Exception as exc:
                         log(f"luna: addressed reply failed: {exc}")
@@ -915,14 +917,13 @@ def main() -> int:
                             module.send_group_image(
                                 token, group_openid, card, card.name, msg_id=message_id, msg_seq=1
                             )
-                            if help_url:
-                                module.send_group_message(
-                                    token,
-                                    group_openid,
-                                    f"使用说明：{help_url}",
-                                    msg_id=message_id,
-                                    msg_seq=2,
-                                )
+                            module.send_group_message(
+                                token,
+                                group_openid,
+                                f"使用说明：{HELP_URL}",
+                                msg_id=message_id,
+                                msg_seq=2,
+                            )
                             log(f"help card+link sent group={group_openid}")
                         except Exception as exc:
                             log(f"help send failed: {exc}")
@@ -939,10 +940,14 @@ def main() -> int:
                     message_id = str(entry.get("id") or "")
                     sent_at = float(entry.get("ts") or 0)
                     if not message_id:
-                        module.send_group_message(token, group_openid, "没有可撤回的消息。", msg_id=None)
+                        module.send_group_message(
+                            token, group_openid, "没有可撤回的消息。", msg_id=None, msg_seq=1
+                        )
                         continue
                     if time.time() - sent_at > 115:
-                        module.send_group_message(token, group_openid, "超过两分钟，撤不回了。", msg_id=None)
+                        module.send_group_message(
+                            token, group_openid, "超过两分钟，撤不回了。", msg_id=None
+                        )
                         continue
                     try:
                         module.recall_group_message(token, group_openid, message_id)
@@ -1090,7 +1095,8 @@ def main() -> int:
                         log(f"luna: chat disabled, skip command key={cooldown_key}")
                         continue
                     now = time.time()
-                    if now - last_luna.get(cooldown_key, 0.0) < LUNA_COOLDOWN:
+                    sister_identity = is_sister_line and luna.is_identity_question(args)
+                    if not sister_identity and now - last_luna.get(cooldown_key, 0.0) < LUNA_COOLDOWN:
                         log(f"luna: cooldown key={cooldown_key}")
                         continue
 
@@ -1168,10 +1174,9 @@ def main() -> int:
                             module.send_group_image(
                                 token, group_openid, card, card.name, msg_id=message_id, msg_seq=2
                             )
-                            if help_url:
-                                module.send_group_message(
-                                    token, group_openid, f"使用说明：{help_url}", msg_id=message_id, msg_seq=3
-                                )
+                            module.send_group_message(
+                                token, group_openid, f"使用说明：{HELP_URL}", msg_id=message_id, msg_seq=3
+                            )
                             log(f"luna: capability -> card+link group={group_openid}")
                         except Exception as exc:
                             log(f"luna capability failed: {exc}")
@@ -1310,6 +1315,13 @@ def main() -> int:
                         if user_id and str(author.get("member_role") or "").lower() == "owner" and user_id not in owners:
                             owners.add(user_id)
                             save_owners(owners)
+                        speaker_profile = (
+                            profiles.summary(user_id) if control_enabled("profile", True) else ""
+                        )
+                        if target_id and target_id != user_id and control_enabled("profile", True):
+                            target_profile = profiles.summary(target_id)
+                            if target_profile:
+                                speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
                         answer = luna.reply(
                             group_openid,
                             args,
@@ -1318,10 +1330,9 @@ def main() -> int:
                             sister=is_sister_line,
                             respect=respect,
                             images=image_paths,
-                            profile=profiles.summary(target_id or user_id)
-                            if control_enabled("profile", True)
-                            else "",
+                            profile=speaker_profile,
                             tool_result=tool[1] if tool else "",
+                            speaker=speaker,
                         )
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(
@@ -1365,7 +1376,7 @@ def main() -> int:
                         module.send_group_message(
                             token,
                             group_openid,
-                            "用法：/找图 角色名 [1|2]，例如 /找图 角色名 2",
+                            "用法：/找图 角色名 [1|2]，例如 /找图 灵梦 2",
                             msg_id=message_id,
                         )
                     except Exception as exc:

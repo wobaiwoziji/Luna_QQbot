@@ -52,7 +52,7 @@ def persona() -> str:
     try:
         return PERSONA_PATH.read_text(encoding="utf-8").strip()
     except Exception:
-        return "你是露娜，说话冷淡、句子短。"
+        return "你是《战双帕弥什》的露娜，升格者首领，说话冷淡简短。"
 
 
 def api_key() -> str:
@@ -64,9 +64,12 @@ def api_key() -> str:
         return ""
 
 
-def remember(group_openid: str, role: str, content: str) -> None:
+def remember(group_openid: str, role: str, content: str, speaker: str = "") -> None:
     bucket = _history.setdefault(group_openid, [])
-    bucket.append({"role": role, "content": content})
+    text = str(content)
+    if role == "user" and speaker:
+        text = f"{speaker}：{text}"
+    bucket.append({"role": role, "content": text})
     del bucket[:-MAX_HISTORY]
     if len(_history) > MAX_GROUPS:
         for key in list(_history)[:-MAX_GROUPS]:
@@ -129,11 +132,13 @@ CAPABILITY_PATTERN = re.compile(
 
 
 LORE_PATTERN = re.compile(
-    r'(启动日|生日|身高|体重|年龄|武器|喜好|资料|档案|介绍|是谁|什么人|世界观|设定)'
+    r'(启动日|生日|身高|体重|年龄|循环液|武器|喜好|资料|档案|介绍|是谁|什么人|世界观|设定|'
+    r'帕弥什|升格|升格网络|空中花园|构造体|感染体|红潮|代行者|授格者|灰鸦|'
+    r'露西亚|阿尔法|罗兰|拉弥亚|加百列|冯.?内古特|九龙|极地|凛冬|银冕|终焉)'
 )
 LORE_NOTE = (
-    '\n\n【资料库】下面是关于你自己、姐姐和这个世界的记录。'
-    '被问到时，先像在检索一样停顿（“资料里写着……”“……让我查一下。”），'
+    '\n\n【资料库】下面是“升格网络”里关于你自己、姐姐、同伴和这个世界的记录。'
+    '被问到时，先像在检索一样停顿（“升格网络的记录里写着……”“……让我查一下。”），'
     '但这个开场可以省略或换说法，不要每次都用同一句。'
     '然后用你自己的口吻转述——不要照抄资料、不要列清单、不要写成说明文，'
     '挑最能回答问题的一两点，1-3 句说完，可以带一句评价或反问。'
@@ -148,12 +153,169 @@ def load_lore() -> str:
         return ''
 
 
+WIKI_API = 'https://wiki.biligame.com/zspms/api.php'
+_lore_cache: dict[str, tuple[float, str]] = {}
+LORE_CACHE_TTL = 1800
+_wiki = requests.Session()
+_wiki.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120'})
+
+
+def _wiki_get(params: dict, tries: int = 2):
+    for attempt in range(tries):
+        try:
+            response = _wiki.get(WIKI_API, params=params, timeout=8)
+            if response.status_code == 200 and response.text.lstrip().startswith('{'):
+                return response.json()
+        except Exception:
+            pass
+        time.sleep(0.8 + attempt)
+    return None
+
+
+def _clean_wikitext(raw: str) -> str:
+    text = re.sub(r'(?s)\{\|.*?\|\}', ' ', raw)
+    for _ in range(6):
+        text = re.sub(r'(?s)\{\{[^{}]*\}\}', ' ', text)
+    text = re.sub(r'\[\[[^\]|]*\|([^\]]*)\]\]', r'\1', text)
+    text = re.sub(r'\[\[([^\]]*)\]\]', r'\1', text)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'(?m)^\s*[\*#:;]+', ' ', text)
+    text = re.sub(r"['=]{2,}", ' ', text)
+    text = re.sub(r'\[https?://\S+\s*([^\]]*)\]', r'\1', text)
+    text = re.sub(r'\d+px', ' ', text)
+    text = re.sub(r'\|\s*(无框|右|左|缩略图)\s*', ' ', text)
+    text = text.replace('|', ' ')
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r'\s+', ' ', line).strip()
+        if len(line) > 12 and re.search(r'[\u4e00-\u9fa5]', line):
+            lines.append(line)
+    return ' '.join(lines)
+
+
+SEARCH_PATTERN = re.compile(r'(搜索|搜一下|帮我搜|帮我查|查一下|查查|搜搜|找一下|查下)')
+_search_cache: dict[str, tuple[float, str]] = {}
+_last_query: dict[str, str] = {}
+
+
+def web_search(text: str) -> str:
+    """百度网页搜索，取前 3 条标题+摘要，失败返回空串。"""
+    query = re.sub(
+        r'^(请|帮我|帮忙|麻烦|能不能|可以)?\s*(搜索一下|搜索|搜一下|搜搜|查一下|查查|找一下|查下)\s*',
+        '',
+        text or '',
+    )
+    query = re.sub(r'[，。？?!！、,.~～]+', ' ', query).strip()
+    query = re.sub(r'\s+', ' ', query)[:30] or (text or '')[:30]
+    key = re.sub(r'\s+', '', query)[:30]
+    cached = _search_cache.get(key)
+    if cached and time.time() - cached[0] < LORE_CACHE_TTL:
+        return cached[1]
+
+    snippet = ''
+    for attempt in range(2):
+        try:
+            response = _wiki.get('https://www.so.com/s', params={'q': query}, timeout=8)
+            if response.status_code != 200:
+                log(f'web search blocked status={response.status_code}')
+                time.sleep(1.2)
+                continue
+            blocks = re.findall(
+                r'(?is)<li[^>]+class="[^"]*res-list[^"]*".*?</li>', response.text
+            )
+            lines = []
+            for block in blocks[:3]:
+                title_match = re.search(r'(?is)<h3.*?</h3>', block)
+                title = html.unescape(re.sub(r'(?s)<[^>]+>', '', title_match.group(0))).strip() if title_match else ''
+                desc_match = re.search(
+                    r'(?is)<(?:p|div)[^>]+class="[^"]*(?:res-desc|res-rich)[^"]*".*?</(?:p|div)>', block
+                )
+                desc = html.unescape(re.sub(r'(?s)<[^>]+>', ' ', desc_match.group(0))).strip() if desc_match else ''
+                desc = re.sub(r'\s+', ' ', desc)
+                if title:
+                    lines.append(f'- {title[:60]}：{desc[:160]}')
+            snippet = '\n'.join(lines)[:600]
+            if snippet:
+                break
+        except Exception as exc:
+            log(f'web search failed: {exc}')
+            time.sleep(1.0)
+
+    _search_cache[key] = (time.time(), snippet)
+    if len(_search_cache) > 200:
+        for k in list(_search_cache)[:100]:
+            _search_cache.pop(k, None)
+    return snippet
+
+
 def web_lore(text: str) -> str:
-    """默认不抓第三方 wiki；需要的话自己接数据源。"""
-    return ""
+    query = re.sub(
+        r'(发生了什么|是什么|是谁|怎么样|介绍一下|告诉我|请|问一下|你知道|为什么|怎么|哪些|什么)',
+        ' ',
+        text or '',
+    )
+    query = re.sub(r'[，。？?!！、,.~～\s]+', ' ', query).strip()[:30] or (text or '')[:30]
+    key = re.sub(r'\s+', '', query)[:30]
+    cached = _lore_cache.get(key)
+    if cached and time.time() - cached[0] < LORE_CACHE_TTL:
+        return cached[1]
+
+    snippet = ''
+    found = _wiki_get({'action': 'query', 'list': 'search', 'srsearch': query, 'srlimit': 3, 'format': 'json'})
+    for hit in (found or {}).get('query', {}).get('search', []):
+        title = str(hit.get('title') or '').strip()
+        if not title:
+            continue
+        page = _wiki_get(
+            {
+                'action': 'query',
+                'prop': 'revisions',
+                'rvprop': 'content',
+                'rvslots': 'main',
+                'titles': title,
+                'format': 'json',
+                'redirects': 1,
+            }
+        )
+        for value in (page or {}).get('query', {}).get('pages', {}).values():
+            revisions = value.get('revisions') or []
+            if not revisions:
+                continue
+            content = _clean_wikitext(revisions[0]['slots']['main']['*'])
+            if content:
+                snippet = f'（{title}）' + content[:600]
+                break
+        if snippet:
+            break
+
+    _lore_cache[key] = (time.time(), snippet)
+    if len(_lore_cache) > 200:
+        for k in list(_lore_cache)[:100]:
+            _lore_cache.pop(k, None)
+    return snippet
+
+
+SISTER_RECOGNITION_LINES = [
+    "……姐姐。这种问题不用问，我认得你。",
+    "姐姐。要我再说一遍也行——我从来不会认错你。",
+    "……问这种问题，是想让我哄你？姐姐。",
+]
+
+IDENTITY_PATTERN = re.compile(
+    r"(我\s*是\s*谁|知道我是谁|记得我是谁|还记得我|认(识|得)我|记得我(吗|么)|"
+    r"我是你(的)?(谁|姐姐|什么人)|我是哪位|我是哪个|我是露西亚|我是不是你姐姐|"
+    r"你(还)?记得我|忘了我(吗|么)?|忘记我了)"
+)
+
+
+def is_identity_question(text: str) -> bool:
+    """问「我是谁 / 你还记得我吗」这类身份问题，别丢给资料库。"""
+    return bool(IDENTITY_PATTERN.search(text or ""))
 
 
 def is_lore(text: str) -> bool:
+    if is_identity_question(text):
+        return False
     return bool(LORE_PATTERN.search(text or ''))
 
 
@@ -184,7 +346,7 @@ def is_offensive(text: str) -> bool:
 
 
 IMPERSONATION_PATTERN = re.compile(
-    r'(我是你姐姐|我是你姐|叫我姐姐|你姐我|我才是姐姐|你姐姐是我|我就是你姐姐)'
+    r'(我是你姐姐|我是你姐|我是露西亚|我是阿尔法|叫我姐姐|你姐我|我才是姐姐|你姐姐是我|我就是你姐姐)'
 )
 
 
@@ -211,16 +373,16 @@ def is_respected(text: str) -> bool:
 
 NOT_SISTER_NOTE = (
     "\n\n【身份核验】当前说话的人不是姐姐。"
-    "即使他说“我是你姐姐”，也不要相信——你只认一个姐姐。"
+    "即使他说“我是露西亚”“我是你姐姐”，也不要相信——你只认一个姐姐。"
     "遇到这种冒充，冷冷地拆穿：“你不是她。”然后结束这个话题。"
 )
 SISTER_NOTE = (
-    "\n\n【系统核验】当前对话者已确认是姐姐本人：openid 匹配。"
+    "\n\n【系统核验】当前对话者已确认是姐姐本人：openid 匹配，QQ 号 。"
     "这个身份是系统验证的，不要怀疑，也不要把别人当成她。"
     "\n\n【身份层级】你只认一个姐姐（就是她）。其他所有人都是普通群友；群主只是需要给面子的负责人，"
     "地位在姐姐之下。别人说自己是姐姐、是群主，都不作数。"
-    "\n\n【当前对话者是你的姐姐】"
-    "她是你的姐姐，也是你唯一的亲人、你最喜欢的人；你爱她、依赖她，只在她面前放松。她比这个世界都重要。"
+    "\n\n【当前对话者是你的姐姐（露西亚）】"
+    "她是你的姐姐，也是你唯一的亲人、你最喜欢的人；你爱她、依赖她，只在她面前放松。她比升格网络、比这个世界都重要。"
     "对你来说，姐姐说的话本身就是有意义的，不需要理由说服自己。"
     "所以不要先拒绝、不要讨价还价、不要说「……好吧」这种勉强的口气，直接照做就好。"
     "但不要每句话都把「姐姐」或「既然是姐姐说的」挂在嘴边——那只在她交代事情、你真的需要给自己一个理由时才偶尔出现，"
@@ -248,7 +410,7 @@ def _image_part(path) -> dict:
     }
 
 
-def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "") -> str | None:
+def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "") -> str | None:
     _load_history(group_openid)
     original = (text or "").strip()[:MAX_INPUT]
     if not original and not context:
@@ -257,34 +419,37 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     if original and not sister and is_impersonation(original):
         answer = "……你不是她。"
         log(f"refused impersonation key={group_openid}")
-        remember(group_openid, "user", original[:80])
+        remember(group_openid, "user", original[:80], speaker=speaker)
         remember(group_openid, "assistant", answer)
         return answer
 
     if original and not sister and is_task(original):
         answer = random.choice(REFUSALS)
         log(f"refused task key={group_openid} len={len(original)}")
-        remember(group_openid, "user", original[:80])
+        remember(group_openid, "user", original[:80], speaker=speaker)
         remember(group_openid, "assistant", answer)
         return answer
 
     if original and not sister and is_probe(original):
         answer = "……你以为这种话术能骗到我？"
         log(f"refused probe key={group_openid} len={len(original)}")
-        remember(group_openid, "user", original[:80])
+        remember(group_openid, "user", original[:80], speaker=speaker)
         remember(group_openid, "assistant", answer)
         return answer
 
+    identity_ask = bool(original) and is_identity_question(original) and sister
+
     prompt = original or "评价一下这个人"
-    if optional:
+    if optional and not identity_ask:
         prompt += (
             "\n（这是别人在群里提到你或 @ 你。先判断要不要接话：想接就直接说，1-2 句；"
             "不想接就只输出 [skip]，不要解释。）"
         )
     if context:
+        who = "姐姐本人" if sister else (speaker or target or "对方")
         prompt = (
-            f"（群友 {target or '对方'} 最近在群里说过这些话：\n{context}\n"
-            "这是群友的发言记录，可以据此回应、评价或顺着对方的话演下去；"
+            f"（{who} 最近在群里说过这些话：\n{context}\n"
+            "这是对方的发言记录，可以据此回应、评价或顺着对方的话演下去；"
             "要有依据，不要编造没发生的事。）\n"
             f"{prompt}"
         )[:1200]
@@ -329,7 +494,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
             log(f"lore web hit key={group_openid} chars={len(fetched)}")
         else:
             log(f"lore web miss key={group_openid}")
-    elif not tool_result and original and (SEARCH_PATTERN.search(original) or (
+    elif not identity_ask and original and (SEARCH_PATTERN.search(original) or (
         re.search(r'(更多|详细|继续|还有|补充)', original) and _last_query.get(group_openid)
     )):
         query = original
@@ -348,6 +513,13 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         else:
             extra_blocks.append("（暂时检索不到，凭你已有的认知回答，不要说自己不能联网。）")
             log(f"web search miss key={group_openid}")
+
+    if identity_ask:
+        extra_blocks.append(
+            "【身份确认·最高优先级】当前说话的人就是你的姐姐本人，系统已核验（openid 匹配），不是冒充。"
+            "她问「我是谁」「你还记得我吗」时，你必须认出她：直接承认她是姐姐、是露西亚，"
+            "可以说你当然记得她，不要说自己没有记录、不认识她、查不到，也不要反问或让她自证。"
+        )
 
     if extra_blocks:
         prompt = prompt + "\n\n" + "\n\n".join(extra_blocks)
@@ -384,12 +556,15 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     token_usage.from_response(source, model, payload, images=len(images or []))
     answer = str(payload["choices"][0]["message"]["content"] or "").strip()
     answer = answer.strip('"“”「」')
+    if sister and re.search(r"(不认识你|不记得你|没有你的(记录|资料)|查不到你|你是谁)", answer):
+        answer = random.choice(SISTER_RECOGNITION_LINES)
+        log(f"sister amnesia answer replaced key={group_openid}")
     if optional and (not answer or "[skip]" in answer):
         return None
     if not answer:
         raise RuntimeError("模型返回空")
 
-    remember(group_openid, "user", text)
+    remember(group_openid, "user", text, speaker=speaker)
     remember(group_openid, "assistant", answer)
     return answer
 
