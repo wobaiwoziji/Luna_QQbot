@@ -115,13 +115,13 @@ def card_text(role: dict) -> str:
     if not text:
         note = str(role.get("note") or "").strip()
         text = f"【对方身份】说话的人是{name}。{note}"
-    elif name and name not in text:
-        text = f"【对方身份】{name}。" + text
     return "\n\n" + text
 
 
 def identity_line(role: dict) -> str:
-    name = display(role) or "姐姐"
+    if is_sister(role):
+        return "……姐姐。这种问题不用问，我认得你。"
+    name = display(role) or "群友"
     return f"……{name}。这种问题不用问，我认得你。"
 
 
