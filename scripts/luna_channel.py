@@ -25,6 +25,7 @@ MEMES_DIR = ROOT / "picture" / "memes"
 USED_DIR = MEMES_DIR / "used"
 IMAGE_DIR = ROOT / "logs" / "luna-channel-images"
 STATE_PATH = ROOT / "logs" / "luna-channel.json"
+CHANNEL_CONFIG_PATH = ROOT / "logs" / "channel-config.json"
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 WEEKEND = (5, 6)
@@ -152,8 +153,67 @@ def pick_meme_file() -> Path | None:
     return random.choice(files) if files else None
 
 
-def fetch_acg() -> dict:
-    """yande.re 随机安全图，带 author。"""
+def load_channel_settings() -> dict:
+    try:
+        data = json.loads(CHANNEL_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    urls = []
+    for item in data.get("urls") or []:
+        text = str(item or "").strip()
+        if text:
+            urls.append(text)
+    return {"urls": urls[:50], "preferLocal": data.get("preferLocal", True) is not False}
+
+
+def local_acg(seen: set[str]) -> dict | None:
+    folder = ROOT / "picture" / "acg"
+    if not folder.exists():
+        return None
+    files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXT]
+    random.shuffle(files)
+    for path in files:
+        try:
+            if image_bytes_sha(path) in seen:
+                continue
+        except Exception:
+            continue
+        author = ""
+        try:
+            sidecar = path.with_suffix(path.suffix + ".json")
+            if sidecar.exists():
+                author = str(json.loads(sidecar.read_text(encoding="utf-8")).get("author") or "")
+        except Exception:
+            pass
+        return {"path": path, "author": author, "source": f"local:{path.name}", "tags": ""}
+    return None
+
+
+def fetch_acg(seen: set[str] | None = None) -> dict:
+    """优先自定义图源和本地图，再走 yande / konachan / safebooru。"""
+    seen = set(seen or [])
+    settings = load_channel_settings()
+
+    custom = list(settings["urls"])
+    random.shuffle(custom)
+    for line in custom:
+        url, _, author = line.partition("|")
+        url = url.strip()
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        try:
+            path = download(url, url)
+            if image_bytes_sha(path) in seen:
+                continue
+            return {"path": path, "author": author.strip(), "source": "custom", "tags": ""}
+        except Exception as exc:
+            log(f"custom image failed: {type(exc).__name__}: {exc}")
+
+    if settings["preferLocal"]:
+        picked = local_acg(seen)
+        if picked:
+            return picked
+
     headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://yande.re/"}
     last = ""
     for attempt in range(4):
@@ -243,12 +303,9 @@ def fetch_acg() -> dict:
         last += f" | safebooru: {type(exc).__name__}: {exc}"
 
     # 最后用本地备选图
-    local = ROOT / "picture" / "acg"
-    if local.exists():
-        files = [p for p in local.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXT]
-        if files:
-            path = random.choice(files)
-            return {"path": path, "author": "", "source": f"local:{path.name}", "tags": ""}
+    picked = local_acg(seen)
+    if picked:
+        return picked
     raise RuntimeError(f"美图抓取失败: {last}")
 
 
@@ -442,7 +499,7 @@ def post_slot(slot: str, force: bool = False, dry_run: bool = False) -> dict:
                 else:
                     picked = fetch_meme()
             else:
-                picked = fetch_acg()
+                picked = fetch_acg(seen)
         except Exception as exc:
             reason = str(exc)
             log(f"pick failed: {exc}")
