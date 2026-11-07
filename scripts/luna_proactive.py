@@ -22,15 +22,17 @@ import token_usage
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = ROOT / "logs" / "luna-proactive.json"
+REPLIED_PATH = ROOT / "logs" / "luna-replied.json"
 
 MIN_NEW_MESSAGES = 3
 MIN_GAP_SECONDS = 180
 MAX_PER_HOUR = 8
+DIRECT_REPLY_GAP = 150
 ACTIVE_START_HOUR = 8
 ACTIVE_END_MINUTES = 22 * 60 + 30
 
 SYSTEM = (
-    "你在一个 QQ 群里潜水，用露娜的身份看群聊。"
+    "你在一个 QQ 群里潜水，用露娜（《战双帕弥什》升格者首领、代行者）的身份看群聊。"
     "先判断你对这段聊天有没有兴趣，再决定要不要插一句。"
     "你感兴趣：数学/物理这类硬核讨论、技术问题、游戏剧情与设定、版本与卡池、新闻时事、"
     "有人分享视频或音乐、有人认真提问、有人被误解或需要一句冷嘲；"
@@ -59,6 +61,31 @@ def load_state() -> dict:
 def save_state(state: dict) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _load_replied() -> dict:
+    try:
+        data = json.loads(REPLIED_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def mark_replied(group: str, ts: float | None = None) -> None:
+    """机器人刚直接回过话，主动插话先退一会儿，别连答两遍。"""
+    if not group:
+        return
+    data = _load_replied()
+    now = time.time() if ts is None else ts
+    data[group] = now
+    if len(data) > 200:
+        for key in sorted(data, key=lambda k: data[k])[:-100]:
+            data.pop(key, None)
+    try:
+        REPLIED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        REPLIED_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception as exc:
+        log(f"mark replied failed: {exc}")
 
 
 def active_now() -> bool:
@@ -149,6 +176,7 @@ def run_once(module, groups: list[str], token_state: dict, sister_openid: str = 
         return []
 
     state = load_state()
+    replied = _load_replied()
     sent: list[tuple[str, str]] = []
     now = time.time()
 
@@ -158,6 +186,8 @@ def run_once(module, groups: list[str], token_state: dict, sister_openid: str = 
         entry.setdefault("speaks", [])
         entry.setdefault("texts", [])
         entry.setdefault("last_ids", [])
+        if now - float(replied.get(group) or 0) < DIRECT_REPLY_GAP:
+            continue
         if entry.get("cooldown_until", 0) > now:
             continue
 
