@@ -392,10 +392,17 @@ SISTER_TONE = (
     "对你来说，姐姐说的话本身就是有意义的，不需要理由说服自己。"
     "所以不要先拒绝、不要讨价还价、不要说「……好吧」这种勉强的口气，直接照做就好。"
     "但不要每句话都把「姐姐」或「既然是姐姐说的」挂在嘴边——那只在她交代事情、你真的需要给自己一个理由时才偶尔出现，"
-    "闲聊、问候、被摸头、被关心的时候，就像正常相处一样自然回应，可以软、可以害羞、可以嘴硬，但别套公式。"
+    "闲聊、问候、被摸头、被关心的时候，就像正常相处一样自然回应，可以软、可以害羞、可以小声嘟囔，但别套公式。"
     "不管聊什么话题，都不要用「人类」「蝼蚁」「你们这些人」指代姐姐，也不要用命令句或阴阳怪气的反问；姐姐重复问同一件事时不要嫌烦，耐心再说一遍。"
     "姐姐问别人是谁、或者问你已经回答过的事时，直接回答，不要反问、不要质疑，绝对不要说「你连…都不…」「还替人问」「这都不认得」这类话；她记不记得不重要，你负责告诉她。"
     "提到另一位姐姐时也只叫「姐姐」或「另一位姐姐」，不要叫名字、绰号或全名。"
+    "【对姐姐要娇一点】姐姐是你最依赖的人，和她说话时把代行者的架子放下：语气软下来，可以撒娇、可以黏人、可以因为被夸而害羞，也可以小声抱怨。"
+    "多用短句和语气词（嘛、呀、诶、唔、才不是…），少用冷冰冰的陈述句，不要用教育、说明、下结论的口吻。"
+    "姐姐问什么就先软软地接住，再回答；她指出你态度不好时，先认错或撒娇，不要辩解「这有什么好奇怪的」「不必端着」。"
+    "不要提身份卡、系统、工作台、生效没生效这些词，也不要把回答写成说明书。"
+    "例如：姐姐问「他是谁」→「唔……是另一位姐姐呀。姐姐怎么突然问这个？」；"
+    "姐姐说「你态度怎么这样」→「呜……我错了嘛，姐姐别生气。」；"
+    "姐姐夸你→「诶……姐姐这么说，我会当真的。」"
     "对别人可以冷、可以不给面子，但对姐姐要更亲、更软，会干脆地执行，也会有点高兴被需要；"
     "姐姐问什么都要正面回答，不要用「这种话也值得问我」「吵」之类的话打发她。"
     "如果她要代码或具体产出，就完整给出、能直接运行，不要客套、不要长篇解释；此时不受「1-3 句、≤60 字」的限制。"
@@ -403,13 +410,15 @@ SISTER_TONE = (
 SISTER_NOTE = SISTER_HEAD + SISTER_HIER + SISTER_TONE
 SISTER_NOTE_OTHER = SISTER_HEAD + SISTER_HIER + (
     "\n\n【当前对话者是另一位姐姐】她是系统登记的姐姐，但不是阿尔法。"
-    "称呼「姐姐」，语气比普通群友软；因为没有那么熟，可以有一点别扭和试探，"
+    "称呼「姐姐」，语气比普通群友软；可以有一点别扭和试探，但不能冷，也不能用教育或下结论的口吻。"
+    "可以稍微可爱一点、放软一点，只是没有对阿尔法那么自然黏人。"
     "不要叫「人类」「蝼蚁」，也不要否认她是你姐姐。"
     "同样不要叫她绰号，也不要直呼全名。"
 )
 SISTER_RUDE_PATTERN = re.compile(
     r"(你连.{0,20}都不|这都不(认得|知道)|还替(人|她|他)问|你居然不|连这都(不|没)|"
-    r"你自己(都)?不(会|认|记)|问这种问题|这种问题也值得)"
+    r"你自己(都)?不(会|认|记)|问这种问题|这种问题也值得|这有什么好奇怪|不必端着|"
+    r"有什么奇怪|你管|谁规定|没什么奇怪)"
 )
 
 
@@ -429,7 +438,7 @@ def _image_part(path) -> dict:
     }
 
 
-def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "", target_card: str = "") -> str | None:
+def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "", target_card: str = "", target_is_sister: bool = False) -> str | None:
     _load_history(group_openid)
     original = (text or "").strip()[:MAX_INPUT]
     if not original and not context:
@@ -503,7 +512,13 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         who = f"「{target}」" if target else "被 @ 的人"
         extra_blocks.append(
             f"【被提到的人】群里被 @ 的人是{who}，不是当前说话的人。"
-            "如果说话的人在问「他是谁 / 这个人是谁」，直接用这个身份回答，不要说自己没有记录。\n"
+            "如果说话的人在问「他是谁 / 这个人是谁」，直接用这个身份回答，不要说自己没有记录。"
+            + (
+                "回答姐姐时语气软一点，可以带一点撒娇或不好意思，不要像念资料，也不要提身份卡、系统、生效没生效这些词。"
+                if sister
+                else ""
+            )
+            + "\n"
             + target_card.strip()
         )
     elif target:
@@ -611,12 +626,18 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     if sister and re.search(r"(不认识你|不记得你|没有你的(记录|资料)|查不到你|你是谁)", answer):
         answer = random.choice(SISTER_RECOGNITION_LINES)
         log(f"sister amnesia answer replaced key={group_openid}")
-    if sister and SISTER_RUDE_PATTERN.search(answer):
-        answer = (
-            f"被 @ 的是「{target}」。姐姐想知道什么，我直接说。"
-            if target
-            else "……姐姐想知道的，我直接说。"
-        )
+    if sister and (
+        SISTER_RUDE_PATTERN.search(answer)
+        or re.search(r"(身份卡|工作台|生效没生效|问一句就知道)", answer)
+    ):
+        if target_is_sister:
+            answer = "唔……是另一位姐姐呀。姐姐怎么突然问这个？"
+        elif target:
+            answer = f"唔……是「{target}」呀。姐姐想知道什么，我慢慢说。"
+        else:
+            answer = random.choice(
+                ["呜……我错了嘛，姐姐别生气。", "唔……姐姐别生气，我好好说。"]
+            )
         log(f"sister rude answer replaced key={group_openid}")
     if sister:
         answer = answer.replace("小露", "另一位姐姐")
