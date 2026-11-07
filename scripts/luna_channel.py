@@ -6,9 +6,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html as html_lib
 import json
+import os
 import random
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -309,6 +314,96 @@ def fetch_acg(seen: set[str] | None = None) -> dict:
     raise RuntimeError(f"美图抓取失败: {last}")
 
 
+XHH_HOME = "https://www.xiaoheihe.cn/app/bbs/home"
+XHH_WORD_DENY = ("政治", "色情", "裸聊", "博彩", "下注", "约炮", "开盒", "代开发票", "刷单", "返利")
+
+
+def _chrome_path() -> str:
+    candidates = [
+        os.environ.get("PROGRAMFILES", r"C:\Program Files") + r"\Google\Chrome\Application\chrome.exe",
+        os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)") + r"\Google\Chrome\Application\chrome.exe",
+        os.environ.get("LOCALAPPDATA", "") + r"\Google\Chrome\Application\chrome.exe",
+    ]
+    for path in candidates:
+        if path and Path(path).exists():
+            return path
+    return ""
+
+
+def _clean_html(raw: str) -> str:
+    return html_lib.unescape(re.sub(r"<[^>]+>", "", raw or "")).strip()
+
+
+def fetch_xiaoheihe(seen: set[str] | None = None) -> dict:
+    """用无头 Chrome 打开小黑盒社区，取一条带图的帖子。"""
+    chrome = _chrome_path()
+    if not chrome:
+        raise RuntimeError("没找到 Chrome")
+    seen = set(seen or [])
+    profile = tempfile.mkdtemp(prefix="xhh-")
+    try:
+        result = subprocess.run(
+            [
+                chrome,
+                "--headless=new",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--no-first-run",
+                f"--user-data-dir={profile}",
+                "--virtual-time-budget=8000",
+                "--dump-dom",
+                XHH_HOME,
+            ],
+            capture_output=True,
+            timeout=90,
+        )
+        dom = result.stdout.decode("utf-8", "replace")
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+
+    candidates = []
+    for block in dom.split("bbs-home__content-item")[1:11]:
+        link = re.search(r'href="/app/bbs/link/(\d+)"', block)
+        title_match = re.search(r'bbs-content__title">(.*?)</div>', block, re.S)
+        user_match = re.search(r'list-content__username">(.*?)</p>', block, re.S)
+        wrapper = re.search(r'bbs-content__imgs-wrapper.*?</div>\s*</div>', block, re.S)
+        image_match = re.search(r'<img src="(https://[^"]+)"', wrapper.group(0) if wrapper else "")
+        if not link or not title_match or not image_match:
+            continue
+        title = _clean_html(title_match.group(1))[:80]
+        author = _clean_html(user_match.group(1)) if user_match else ""
+        if len(title) < 6 or any(word in title for word in XHH_WORD_DENY):
+            continue
+        if author in ("官方", "小黑盒官方", "Heybox"):
+            continue
+        candidates.append(
+            {
+                "id": link.group(1),
+                "title": title,
+                "author": author[:30],
+                "image": html_lib.unescape(image_match.group(1)),
+            }
+        )
+
+    random.shuffle(candidates)
+    for item in candidates[:6]:
+        try:
+            path = download(item["image"], "https://www.xiaoheihe.cn/")
+            if image_bytes_sha(path) in seen:
+                continue
+            return {
+                "path": path,
+                "author": "",
+                "source": "xiaoheihe",
+                "post_title": item["title"],
+                "post_author": item["author"],
+                "post_url": f"https://www.xiaoheihe.cn/app/bbs/link/{item['id']}",
+            }
+        except Exception as exc:
+            log(f"xhh image failed: {type(exc).__name__}: {exc}")
+    raise RuntimeError("小黑盒没有可用帖子")
+
+
 def fetch_meme() -> dict:
     """360 图搜中文梗图。"""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://image.so.com/"}
@@ -427,7 +522,7 @@ def clean(text: str, limit: int) -> str:
     return value[:limit]
 
 
-def compose(slot: str, info: dict, author: str) -> tuple[str, str]:
+def compose(slot: str, info: dict, author: str, post: dict | None = None) -> tuple[str, str]:
     greeting = SLOTS[slot]["greeting"]
     what = clean(info.get("what"), 24)
     quote = clean(info.get("quote"), 24)
@@ -436,6 +531,13 @@ def compose(slot: str, info: dict, author: str) -> tuple[str, str]:
 
     if SLOTS[slot]["kind"] == "meme":
         title = f"{greeting}，{roast or '今日电子榨菜，凑合看。'}"
+        if post and post.get("post_title"):
+            body = (
+                f"【小黑盒】{post.get('post_title')}\n"
+                f"来源：小黑盒 @{post.get('post_author') or '网友'}\n"
+                f"{post.get('post_url') or ''}"
+            )
+            return clean(title, 40), body[:220]
         return clean(title, 40), "中午的电子榨菜。"
 
     styles = [roast, quote, what]
@@ -487,17 +589,22 @@ def post_slot(slot: str, force: bool = False, dry_run: bool = False) -> dict:
         folder_file = None
         try:
             if kind == "meme":
-                folder_file = pick_meme_file()
-                if folder_file:
-                    picked = {
-                        "path": folder_file,
-                        "author": "",
-                        "source": f"folder:{folder_file.name}",
-                        "folder": folder_file,
-                    }
-                    log(f"meme from folder: {folder_file.name}")
-                else:
-                    picked = fetch_meme()
+                try:
+                    picked = fetch_xiaoheihe(seen)
+                    log(f"xhh post: {picked.get('post_title','')[:40]}")
+                except Exception as exc:
+                    log(f"xhh failed: {exc}")
+                    folder_file = pick_meme_file()
+                    if folder_file:
+                        picked = {
+                            "path": folder_file,
+                            "author": "",
+                            "source": f"folder:{folder_file.name}",
+                            "folder": folder_file,
+                        }
+                        log(f"meme from folder: {folder_file.name}")
+                    else:
+                        picked = fetch_meme()
             else:
                 picked = fetch_acg(seen)
         except Exception as exc:
@@ -529,7 +636,7 @@ def post_slot(slot: str, force: bool = False, dry_run: bool = False) -> dict:
     sha = picked["sha"]
     source_file = picked.get("folder")
 
-    title, body = compose(slot, info, picked.get("author", ""))
+    title, body = compose(slot, info, picked.get("author", ""), picked)
     if dry_run:
         return {
             "slot": slot,
