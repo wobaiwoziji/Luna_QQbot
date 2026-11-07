@@ -11,9 +11,7 @@ import json
 import os
 import random
 import re
-import shutil
 import subprocess
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -324,6 +322,7 @@ def fetch_acg(seen: set[str] | None = None) -> dict:
 
 XHH_HOME = "https://www.xiaoheihe.cn/app/bbs/home"
 XHH_REFERER = "https://www.xiaoheihe.cn/"
+XHH_PROFILE = ROOT / "logs" / "xhh-chrome-profile"
 XHH_WORD_DENY = ("政治", "色情", "裸聊", "博彩", "下注", "约炮", "开盒", "代开发票", "刷单", "返利")
 CURATION_PATH = ROOT / "logs" / "xhh-curation.json"
 TASTE_FALLBACK = {"AI": 4, "折扣": 4, "史低": 4, "翻车": 3, "打脸": 3, "差评": 3, "神作": 3, "梗": 3, "沙雕": 3, "离谱": 3, "笑死": 3, "同人": 3}
@@ -416,7 +415,7 @@ def fetch_xiaoheihe(seen: set[str] | None = None) -> dict:
     chrome = _chrome_path()
     if not chrome:
         raise RuntimeError("没找到 Chrome")
-    profile = tempfile.mkdtemp(prefix="xhh-")
+    XHH_PROFILE.mkdir(parents=True, exist_ok=True)
     try:
         result = subprocess.run(
             [
@@ -425,7 +424,7 @@ def fetch_xiaoheihe(seen: set[str] | None = None) -> dict:
                 "--disable-gpu",
                 "--no-sandbox",
                 "--no-first-run",
-                f"--user-data-dir={profile}",
+                f"--user-data-dir={XHH_PROFILE}",
                 "--virtual-time-budget=8000",
                 "--dump-dom",
                 XHH_HOME,
@@ -434,8 +433,11 @@ def fetch_xiaoheihe(seen: set[str] | None = None) -> dict:
             timeout=90,
         )
         dom = result.stdout.decode("utf-8", "replace")
-    finally:
-        shutil.rmtree(profile, ignore_errors=True)
+    except Exception as exc:
+        raise RuntimeError(f"Chrome 启动失败，可能配置目录被占用：{exc}") from exc
+
+    if not dom.strip() or "captcha" in dom.lower() or "安全验证" in dom:
+        raise RuntimeError("小黑盒需要验证，请到工作台点「打开小黑盒浏览器」过一次验证再试")
 
     candidates = []
     for block in dom.split("bbs-home__content-item")[1:11]:
