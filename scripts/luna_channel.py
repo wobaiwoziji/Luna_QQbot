@@ -313,18 +313,19 @@ def compose(slot: str, info: dict, author: str) -> tuple[str, str]:
 
     if SLOTS[slot]["kind"] == "meme":
         title = f"{greeting}，{roast or '今日电子榨菜，凑合看。'}"
-        body = f"中午的电子榨菜。{roast}" if roast else "中午的电子榨菜，笑不笑随你。"
-        return clean(title, 40), clean(body, 80)
+        return clean(title, 40), "中午的电子榨菜。"
 
     styles = [roast, quote, what]
     style = random.choice([item for item in styles if item] or [fallback or "随便看看"])
     if style == quote and quote:
         title = f"{greeting}。「{quote}」"
+        body = what or roast or "看图。"
     elif style == roast and roast:
         title = f"{greeting}，{roast}"
+        body = what or "看图。"
     else:
         title = f"{greeting}，{what or '一张图。'}"
-    body = f"{what or roast or '看图。'}"
+        body = roast if roast and roast != what else "看图。"
     if author:
         body += f"\n画师：{author}"
     return clean(title, 40), body[:120]
