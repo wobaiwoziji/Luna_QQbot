@@ -946,14 +946,34 @@ def main() -> int:
                             log(f"tool send failed: {exc}")
                         continue
                     recent = chat.history(group_openid, limit=6)
-                    context_lines = "\n".join(
-                        f"{item.get('name') or '群友'}：{str(item.get('text', ''))[:60]}" for item in recent
+                    recent_rows = []
+                    for item in recent:
+                        item_role = roles.resolve(
+                            group_openid, str(item.get("user", "")), sister_openid
+                        )
+                        if item_role.get("id") == "alpha":
+                            item_name = "姐姐"
+                        elif roles.is_sister(item_role):
+                            item_name = "另一位姐姐"
+                        else:
+                            item_name = item.get("name") or "群友"
+                        recent_rows.append(f"{item_name}：{str(item.get('text', ''))[:60]}")
+                    context_lines = "\n".join(recent_rows)
+                    speaker_profile = (
+                        profiles.summary(user_id)
+                        if control_enabled("profile", True) and not is_sister_line
+                        else ""
                     )
-                    speaker_profile = profiles.summary(user_id) if control_enabled("profile", True) else ""
-                    if target_id and target_id != user_id and control_enabled("profile", True):
+                    if (
+                        target_id
+                        and target_id != user_id
+                        and control_enabled("profile", True)
+                        and not roles.is_sister(target_role)
+                    ):
                         target_profile = profiles.summary(target_id)
                         if target_profile:
                             speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
+                    reply_speaker = "姐姐" if is_sister_line else speaker
                     image_paths = []
                     if has_image:
                         try:
@@ -990,12 +1010,13 @@ def main() -> int:
                             source="mention",
                             profile=speaker_profile,
                             tool_result=tool[1] if tool else "",
-                            speaker=speaker,
+                            speaker=reply_speaker,
                             role_card=roles.card_text(role_card),
                             privileged=is_privileged,
                             role_name=role_name,
                             target=target_name,
                             target_card=roles.target_card_text(target_role),
+                            target_is_sister=roles.is_sister(target_role),
                             images=image_paths,
                         )
                     except Exception as exc:
@@ -1437,12 +1458,20 @@ def main() -> int:
                             owners.add(user_id)
                             save_owners(owners)
                         speaker_profile = (
-                            profiles.summary(user_id) if control_enabled("profile", True) else ""
+                            profiles.summary(user_id)
+                            if control_enabled("profile", True) and not is_sister_line
+                            else ""
                         )
-                        if target_id and target_id != user_id and control_enabled("profile", True):
+                        if (
+                            target_id
+                            and target_id != user_id
+                            and control_enabled("profile", True)
+                            and not roles.is_sister(target_role)
+                        ):
                             target_profile = profiles.summary(target_id)
                             if target_profile:
                                 speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
+                        reply_speaker = "姐姐" if is_sister_line else speaker
                         answer = luna.reply(
                             group_openid,
                             args,
@@ -1453,11 +1482,12 @@ def main() -> int:
                             images=image_paths,
                             profile=speaker_profile,
                             tool_result=tool[1] if tool else "",
-                            speaker=speaker,
+                            speaker=reply_speaker,
                             role_card=roles.card_text(role_card),
                             privileged=is_privileged,
                             role_name=role_name,
                             target_card=roles.target_card_text(target_role),
+                            target_is_sister=roles.is_sister(target_role),
                         )
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(
