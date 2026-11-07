@@ -195,9 +195,17 @@ def local_acg(seen: set[str]) -> dict | None:
 
 
 def fetch_acg(seen: set[str] | None = None) -> dict:
-    """优先自定义图源和本地图，再走 yande / konachan / safebooru。"""
+    """先出自选帖子，再走自定义图源和本地图，最后 yande / konachan / safebooru。"""
     seen = set(seen or [])
     settings = load_channel_settings()
+
+    try:
+        queued = take_queued("acg", seen)
+    except Exception as exc:
+        log(f"acg queue failed: {type(exc).__name__}: {exc}")
+        queued = None
+    if queued:
+        return queued
 
     custom = list(settings["urls"])
     random.shuffle(custom)
@@ -315,7 +323,67 @@ def fetch_acg(seen: set[str] | None = None) -> dict:
 
 
 XHH_HOME = "https://www.xiaoheihe.cn/app/bbs/home"
+XHH_REFERER = "https://www.xiaoheihe.cn/"
 XHH_WORD_DENY = ("政治", "色情", "裸聊", "博彩", "下注", "约炮", "开盒", "代开发票", "刷单", "返利")
+CURATION_PATH = ROOT / "logs" / "xhh-curation.json"
+TASTE_FALLBACK = {"AI": 4, "折扣": 4, "史低": 4, "翻车": 3, "打脸": 3, "差评": 3, "神作": 3, "梗": 3, "沙雕": 3, "离谱": 3, "笑死": 3, "同人": 3}
+
+
+def load_curation() -> dict:
+    try:
+        data = json.loads(CURATION_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("bad curation")
+    except Exception:
+        return {"taste": dict(TASTE_FALLBACK), "queue": []}
+    data["queue"] = data.get("queue") if isinstance(data.get("queue"), list) else []
+    data["taste"] = data.get("taste") if isinstance(data.get("taste"), dict) else dict(TASTE_FALLBACK)
+    return data
+
+
+def save_curation(data: dict) -> None:
+    try:
+        CURATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        log(f"save curation failed: {exc}")
+
+
+def take_queued(tag: str, seen: set[str]) -> dict | None:
+    """从选好的队列里取一条，不删；发出去后再调 drop_queued。"""
+    curation = load_curation()
+    for item in curation["queue"]:
+        if (item.get("tag") or "noon") != tag or not item.get("image"):
+            continue
+        try:
+            path = download(item["image"], XHH_REFERER)
+        except Exception as exc:
+            log(f"queue image failed: {type(exc).__name__}: {exc}")
+            continue
+        if image_bytes_sha(path) in seen:
+            continue
+        log(f"queued post: {item.get('title', '')[:30]}")
+        return {
+            "path": path,
+            "author": str(item.get("artist") or ""),
+            "source": "xiaoheihe",
+            "post_title": str(item.get("title") or ""),
+            "post_author": str(item.get("author") or ""),
+            "post_url": str(item.get("url") or ""),
+            "queue_url": str(item.get("url") or ""),
+        }
+    return None
+
+
+def drop_queued(url: str) -> None:
+    if not url:
+        return
+    curation = load_curation()
+    queue = curation["queue"]
+    rest = [q for q in queue if q.get("url") != url]
+    if len(rest) == len(queue):
+        return
+    curation["queue"] = rest
+    save_curation(curation)
 
 
 def _chrome_path() -> str:
@@ -335,11 +403,19 @@ def _clean_html(raw: str) -> str:
 
 
 def fetch_xiaoheihe(seen: set[str] | None = None) -> dict:
-    """用无头 Chrome 打开小黑盒社区，取一条带图的帖子。"""
+    """先出队列里选好的帖子，队列空了再按审美权重从社区首页挑。"""
+    seen = set(seen or [])
+    try:
+        queued = take_queued("noon", seen)
+    except Exception as exc:
+        log(f"queue failed: {type(exc).__name__}: {exc}")
+        queued = None
+    if queued:
+        return queued
+
     chrome = _chrome_path()
     if not chrome:
         raise RuntimeError("没找到 Chrome")
-    seen = set(seen or [])
     profile = tempfile.mkdtemp(prefix="xhh-")
     try:
         result = subprocess.run(
@@ -385,8 +461,15 @@ def fetch_xiaoheihe(seen: set[str] | None = None) -> dict:
             }
         )
 
+    taste = load_curation()["taste"]
+
+    def taste_score(item: dict) -> int:
+        text = item["title"]
+        return sum(int(weight) for key, weight in taste.items() if key and key in text)
+
     random.shuffle(candidates)
-    for item in candidates[:6]:
+    candidates.sort(key=taste_score, reverse=True)
+    for item in candidates[:5]:
         try:
             path = download(item["image"], "https://www.xiaoheihe.cn/")
             if image_bytes_sha(path) in seen:
@@ -466,25 +549,27 @@ def describe(path: Path, kind: str) -> dict:
         "temperature": 0.8,
         "max_tokens": 320,
     }
-    try:
-        response = requests.post(
-            luna_chat.API_URL,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=body,
-            timeout=40,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        token_usage.from_response("channel", luna_chat.VISION_MODEL, payload, images=1)
-        text = str(payload["choices"][0]["message"]["content"] or "").strip()
-        matched = re.search(r"\{.*\}", text, re.S)
-        if not matched:
-            return {}
-        data = json.loads(matched.group(0))
-        return data if isinstance(data, dict) else {}
-    except Exception as exc:
-        log(f"describe failed: {exc}")
-        return {}
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                luna_chat.API_URL,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=body,
+                timeout=45,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            token_usage.from_response("channel", luna_chat.VISION_MODEL, payload, images=1)
+            text = str(payload["choices"][0]["message"]["content"] or "").strip()
+            matched = re.search(r"\{.*\}", text, re.S)
+            if not matched:
+                return {}
+            data = json.loads(matched.group(0))
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            log(f"describe failed ({attempt + 1}/3): {type(exc).__name__}")
+            time.sleep(2)
+    return {}
 
 
 def text_reply(prompt: str) -> str:
@@ -522,6 +607,15 @@ def clean(text: str, limit: int) -> str:
     return value[:limit]
 
 
+def short_title(text: str, limit: int = 24) -> str:
+    """把长标题压到 24 字以内，尽量在标点处断开。"""
+    value = clean(text, limit + 10)
+    if len(value) <= limit:
+        return value
+    cut = max((value.rfind(ch) for ch in "，。！？；、 "), default=-1)
+    return value[:cut] if cut >= 8 else value[:limit]
+
+
 def compose(slot: str, info: dict, author: str, post: dict | None = None) -> tuple[str, str]:
     greeting = SLOTS[slot]["greeting"]
     what = clean(info.get("what"), 24)
@@ -530,7 +624,8 @@ def compose(slot: str, info: dict, author: str, post: dict | None = None) -> tup
     fallback = clean(info.get("character"), 12)
 
     if SLOTS[slot]["kind"] == "meme":
-        title = f"{greeting}，{roast or '今日电子榨菜，凑合看。'}"
+        fallback_title = short_title((post or {}).get("post_title") or "") or "今日电子榨菜，凑合看。"
+        title = f"{greeting}，{roast or fallback_title}"
         if post and post.get("post_title"):
             body = (
                 f"【小黑盒】{post.get('post_title')}\n"
@@ -555,6 +650,9 @@ def compose(slot: str, info: dict, author: str, post: dict | None = None) -> tup
         body += f"\n画师：{author}"
     else:
         body += "\n画师：不详"
+    if post and post.get("post_url"):
+        body += f"\n出处：小黑盒 @{post.get('post_author') or '网友'}\n{post['post_url']}"
+        return clean(title, 40), body[:220]
     return clean(title, 40), body[:120]
 
 
@@ -616,16 +714,21 @@ def post_slot(slot: str, force: bool = False, dry_run: bool = False) -> dict:
         picked["sha"] = sha
         if not force and sha in seen:
             reason = "duplicate"
+            drop_queued(picked.get("queue_url", ""))
             picked = None
             continue
 
         info = describe(picked["path"], kind)
         if not info:
+            if kind == "meme" and picked.get("post_title"):
+                log("describe unavailable, keep queued title")
+                break
             reason = "no_caption"
             picked = None
             continue
         if info.get("safe") is False:
             reason = "unsafe"
+            drop_queued(picked.get("queue_url", ""))
             picked = None
             continue
         break
@@ -650,6 +753,7 @@ def post_slot(slot: str, force: bool = False, dry_run: bool = False) -> dict:
     url = publish_image(picked["path"])
     paragraphs = [qq_forum.text_paragraph(body), qq_forum.image_paragraph(url)]
     qq_forum.post_thread(channel_id, title, paragraphs)
+    drop_queued(picked.get("queue_url", ""))
 
     thread_id = ""
     for _ in range(3):
