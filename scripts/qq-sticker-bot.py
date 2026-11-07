@@ -791,6 +791,8 @@ def main() -> int:
                 is_sister_line = (bool(sister_openid) and user_id == sister_openid) or roles.is_sister(role_card)
                 is_privileged = (bool(sister_openid) and user_id == sister_openid) or roles.is_privileged(role_card)
                 tier = "sister" if is_sister_line else ("owner" if role == "owner" or user_id in owners else "member")
+                if role_card:
+                    log(f"role speaker={role_name or role_card.get('id')} tier={role_card.get('tier')}")
                 speaker = str(
                     author.get("username") or author.get("card") or names.get(user_id) or ""
                 ).strip()
