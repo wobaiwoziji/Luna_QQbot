@@ -510,6 +510,7 @@ def main() -> int:
     jelly = load_module("qq-jelly.py", "qq_jelly")
     help_card = load_module("qq-help-card.py", "help_card")
     luna = load_module("luna_chat.py", "luna_chat")
+    roles = load_module("luna_roles.py", "luna_roles")
     proactive = load_module("luna_proactive.py", "luna_proactive")
     welcome = load_module("luna_welcome.py", "luna_welcome")
     bili = load_module("luna_bili.py", "luna_bili")
@@ -569,6 +570,12 @@ def main() -> int:
             log(f"welcome seed group={gid[:8]} members={seen_count}")
     except Exception as exc:
         log(f"welcome seed failed: {exc}")
+
+    try:
+        added = roles.seed(sister_openid, groups)
+        log(f"roles seed sister=alpha groups_added={added}")
+    except Exception as exc:
+        log(f"roles seed failed: {exc}")
 
     bili_groups = config.get("biliGroups")
     if not isinstance(bili_groups, list):
@@ -779,7 +786,10 @@ def main() -> int:
                 is_command = bool(command)
                 chat_on = control_enabled("chat", True)
                 role = str(author.get("member_role") or "").strip().lower()
-                is_sister_line = bool(sister_openid) and user_id == sister_openid
+                role_card = roles.resolve(group_openid, user_id, sister_openid)
+                role_name = roles.display(role_card)
+                is_sister_line = (bool(sister_openid) and user_id == sister_openid) or roles.is_sister(role_card)
+                is_privileged = (bool(sister_openid) and user_id == sister_openid) or roles.is_privileged(role_card)
                 tier = "sister" if is_sister_line else ("owner" if role == "owner" or user_id in owners else "member")
                 speaker = str(
                     author.get("username") or author.get("card") or names.get(user_id) or ""
@@ -922,6 +932,9 @@ def main() -> int:
                             profile=profiles.summary(user_id) if control_enabled("profile", True) else "",
                             tool_result=tool[1] if tool else "",
                             speaker=speaker,
+                            role_card=roles.card_text(role_card),
+                            privileged=is_privileged,
+                            role_name=role_name,
                         )
                     except Exception as exc:
                         log(f"luna: addressed reply failed: {exc}")
@@ -1281,7 +1294,7 @@ def main() -> int:
                                 log(f"luna violence reply failed: {exc}")
                         continue
 
-                    if not is_sister_line and luna.is_probe(args):
+                    if not is_privileged and luna.is_probe(args):
                         log(f"luna: probe key={cooldown_key}")
                         punish(
                             module,
@@ -1313,7 +1326,7 @@ def main() -> int:
                             )
                             continue
 
-                    if not is_sister_line and luna.is_task(args):
+                    if not is_privileged and luna.is_task(args):
                         hits = [item for item in task_hits.get(cooldown_key, []) if now - item < TASK_WINDOW]
                         hits.append(now)
                         task_hits[cooldown_key] = hits
@@ -1365,6 +1378,9 @@ def main() -> int:
                             profile=speaker_profile,
                             tool_result=tool[1] if tool else "",
                             speaker=speaker,
+                            role_card=roles.card_text(role_card),
+                            privileged=is_privileged,
+                            role_name=role_name,
                         )
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(
