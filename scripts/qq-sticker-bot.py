@@ -902,6 +902,7 @@ def main() -> int:
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(f"luna: addressed replied key={cooldown_key} id={(sent or {}).get('id')}")
                         log_reply(group_openid, user_id, tier, speaker, plain, answer)
+                        proactive.mark_replied(group_openid)
                     except Exception as exc:
                         log(f"luna: addressed send failed: {exc}")
                     continue
@@ -1340,6 +1341,7 @@ def main() -> int:
                             f"id={(sent or {}).get('id') if isinstance(sent, dict) else ''}"
                         )
                         log_reply(group_openid, user_id, tier, speaker, args, answer)
+                        proactive.mark_replied(group_openid)
                     except Exception as exc:
                         log(f"luna failed: {exc}")
                         try:
