@@ -17,6 +17,7 @@ import token_usage
 ROOT = Path(__file__).resolve().parent.parent
 SEEN_PATH = ROOT / "logs" / "luna-members.json"
 CHAT_DIR = ROOT / "logs" / "chat"
+PROFILE_DIR = ROOT / "logs" / "profiles"
 GROUP_GAP = 120
 MIN_MEMBERS = 5
 MAX_USERS = 800
@@ -49,7 +50,7 @@ def log(text: str) -> None:
 
 
 def _seen_before(group: str) -> dict:
-    """从聊天记录里补出老成员，免得装上新功能后把整个群都欢迎一遍。"""
+    """从聊天记录和身份卡里补出老成员，免得装上新功能后把整个群都欢迎一遍。"""
     users = {}
     folder = CHAT_DIR / group
     for path in sorted(folder.glob("*.jsonl")) if folder.exists() else []:
@@ -61,6 +62,13 @@ def _seen_before(group: str) -> dict:
                     users[user] = int(item.get("ts") or 0)
         except Exception:
             continue
+    for path in PROFILE_DIR.glob("*.json"):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if group in (item.get("groups") or {}):
+            users.setdefault(path.stem, int(item.get("firstSeen") or 0))
     return users
 
 
