@@ -958,7 +958,6 @@ def main() -> int:
                             role_name=role_name,
                             target=target_name,
                             target_card=roles.target_card_text(target_role),
-                            target_is_sister=roles.is_sister(target_role),
                         )
                     except Exception as exc:
                         log(f"luna: addressed reply failed: {exc}")
@@ -1407,7 +1406,6 @@ def main() -> int:
                             privileged=is_privileged,
                             role_name=role_name,
                             target_card=roles.target_card_text(target_role),
-                            target_is_sister=roles.is_sister(target_role),
                         )
                         sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
                         log(
