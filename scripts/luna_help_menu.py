@@ -4,7 +4,17 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 BASE = "https://luna-site-d0gj36nib486137a4-1524033896.tcloudbaseapp.com"
+
+
+def _cmd(text: str, show: str) -> str:
+    """点击后把指令放进输入框，不直接发送。"""
+    return (
+        f'<qqbot-cmd-input text="{quote(text, safe="")}" '
+        f'show="{quote(show, safe="")}" reference="false" />'
+    )
 
 
 def _button(button_id: str, label: str, url: str) -> dict:
@@ -23,18 +33,19 @@ def _button(button_id: str, label: str, url: str) -> dict:
 def build() -> tuple[str, dict]:
     text = (
         "# 🍷 露娜菜单\n\n"
-        "> 蓝色文字都可以点\n\n"
+        "> 蓝色文字都能点：带链接图标的打开网页，不带的会把指令放进输入框\n\n"
         "**💬 聊天**\n"
-        f"[被 @ 或叫露娜]({BASE}/manual.html#talk)｜"
-        f"[/露娜 角色对话]({BASE}/manual.html#talk)\n"
+        f"{_cmd('/露娜 ', '💬 聊天')}｜{_cmd('/露娜 ', '🎭 角色对话')}\n"
         "**🧰 功能**\n"
-        f"[找图]({BASE}/manual.html#find)｜"
-        f"[Q弹动图]({BASE}/manual.html#qtan)｜"
-        f"[聊天总结]({BASE}/manual.html#summary)\n"
-        f"[提醒]({BASE}/manual.html#reminder)｜"
-        f"[小工具]({BASE}/manual.html#tools)｜"
-        f"[指令总表]({BASE}/manual.html#commands)\n"
-        "**📚 资料**\n"
+        f"{_cmd('/找图 ', '🔍 找图')}｜{_cmd('/q弹 ', '🖼️ Q弹')}｜"
+        f"{_cmd('/聊天总结', '📝 聊天总结')}\n"
+        f"{_cmd('/露娜 提醒我 ', '⏰ 提醒')}｜"
+        f"{_cmd('/露娜 天气 ', '🌤️ 天气')}｜"
+        f"{_cmd('/露娜 现在几点', '🕒 时间')}\n"
+        f"{_cmd('/露娜 算一下 ', '🧮 算数')}｜"
+        f"{_cmd('/露娜 B站 ', '📺 B站')}｜"
+        f"{_cmd('/帮助', '❓ 帮助')}\n"
+        "**📚 资料（带链接图标）**\n"
         f"[使用说明]({BASE}/manual.html)｜"
         f"[更新日志]({BASE}/changelog.html)｜"
         f"[Qtan]({BASE}/qtan.html)\n\n"
