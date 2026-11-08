@@ -34,20 +34,16 @@ def build() -> tuple[str, dict]:
     text = (
         "# 🍷 露娜菜单\n\n"
         "> 蓝色文字都能点：带链接图标的打开网页，不带的会把指令放进输入框\n\n"
-        "**💬 聊天**\n"
-        f"{_cmd('/露娜 ', '💬 聊天')}｜{_cmd('/露娜 ', '🎭 角色对话')}\n"
-        "**🧰 功能**\n"
-        f"{_cmd('/找图 ', '🔍 找图')}｜{_cmd('/q弹 ', '🖼️ Q弹')}｜"
-        f"{_cmd('/聊天总结', '📝 聊天总结')}\n"
-        f"{_cmd('/露娜 提醒我 ', '⏰ 提醒')}｜"
-        f"{_cmd('/露娜 天气 ', '🌤️ 天气')}｜"
-        f"{_cmd('/露娜 现在几点', '🕒 时间')}\n"
-        f"{_cmd('/露娜 算一下 ', '🧮 算数')}｜"
-        f"{_cmd('/露娜 B站 ', '📺 B站')}｜"
-        f"{_cmd('/帮助', '❓ 帮助')}\n"
-        "**🍚 支持**\n"
-        f"🍚 [给露娜买饭]({BASE}/sponsor.html)\n"
-        "**📚 资料（带链接图标）**\n"
+        "**💬 聊天**\n\n"
+        f"{_cmd('/露娜 ', '💬 聊天')}｜{_cmd('/露娜 ', '🎭 角色对话')}\n\n"
+        "**🧰 功能**\n\n"
+        f"{_cmd('/找图 ', '🔍 找图')}｜{_cmd('/聊天总结', '📝 聊天总结')}\n\n"
+        f"{_cmd('/露娜 提醒我 ', '⏰ 提醒')}｜{_cmd('/露娜 天气 ', '🌤️ 天气')}\n\n"
+        f"{_cmd('/露娜 现在几点', '🕒 时间')}｜{_cmd('/露娜 算一下 ', '🧮 算数')}\n\n"
+        f"{_cmd('/露娜 B站 ', '📺 B站')}｜{_cmd('/帮助', '❓ 帮助')}\n\n"
+        "**🍚 支持**\n\n"
+        f"🍚 [给露娜买饭]({BASE}/sponsor.html)\n\n"
+        "**📚 资料（带链接图标）**\n\n"
         f"[使用说明]({BASE}/manual.html)｜"
         f"[更新日志]({BASE}/changelog.html)｜"
         f"[Qtan]({BASE}/qtan.html)\n\n"
@@ -61,13 +57,12 @@ def build() -> tuple[str, dict]:
                     "buttons": [
                         _button("b0", "给露娜买饭", f"{BASE}/sponsor.html"),
                         _button("b1", "使用说明", f"{BASE}/manual.html"),
-                        _button("b2", "更新日志", f"{BASE}/changelog.html"),
                     ]
                 },
                 {
                     "buttons": [
+                        _button("b2", "更新日志", f"{BASE}/changelog.html"),
                         _button("b3", "找图说明", f"{BASE}/manual.html#find"),
-                        _button("b4", "Q弹说明", f"{BASE}/manual.html#qtan"),
                     ]
                 },
                 {
