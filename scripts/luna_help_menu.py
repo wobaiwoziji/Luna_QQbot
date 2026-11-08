@@ -43,10 +43,6 @@ def build() -> tuple[str, dict]:
         f"{_cmd('/露娜 B站 ', '📺 B站')}｜{_cmd('/帮助', '❓ 帮助')}\n\n"
         "**🍚 支持**\n\n"
         f"🍚 [给露娜买饭]({BASE}/sponsor.html)\n\n"
-        "**📚 资料（带链接图标）**\n\n"
-        f"[使用说明]({BASE}/manual.html)｜"
-        f"[更新日志]({BASE}/changelog.html)｜"
-        f"[Qtan]({BASE}/qtan.html)\n\n"
         "***\n"
         "露娜会潜水接话，也会在周末发频道。"
     )
