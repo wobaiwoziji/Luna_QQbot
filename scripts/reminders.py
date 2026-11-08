@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = ROOT / "logs" / "reminders.json"
 INTENT = re.compile(r"(提醒我|提醒一下|叫我|记得提醒|到时候提醒|提醒下)")
 MAX_DAYS = 365
+MIN_SECONDS = 60
 SHORT_PATTERN = re.compile(
     r"([0-9]+|[零一二两三四五六七八九十]+|半)\s*(秒钟?|分钟?|分|个?小时|钟头)\s*(?:后|以后|之后)"
 )
@@ -74,7 +75,11 @@ def _parse_short(text: str, now: datetime) -> dict | None:
     what = what.strip(" ，,。.！!？?~～")
     if not what:
         what = "该做说好的事了"
-    return {"due": int((now + timedelta(seconds=seconds)).timestamp()), "text": what[:60]}
+    return {
+        "due": int((now + timedelta(seconds=seconds)).timestamp()),
+        "text": what[:60],
+        "seconds": seconds,
+    }
 
 
 def log(message: str) -> None:
@@ -152,6 +157,12 @@ def maybe_create(group_id: str, user_id: str, name: str, text: str) -> dict | No
     parsed = parse(text)
     if not parsed:
         return None
+    seconds = parsed.get("seconds")
+    if seconds is not None:
+        if seconds < MIN_SECONDS:
+            return {"too_short": True}
+    elif parsed["due"] - time.time() < MIN_SECONDS - 1:
+        return {"too_short": True}
     items = load()
     items.append(
         {
@@ -182,10 +193,8 @@ def take_due(now: float | None = None) -> list[dict]:
 
 def format_due(ts: int) -> str:
     delta = ts - time.time()
-    if 0 < delta < 120:
-        return f"{max(1, round(delta))} 秒后"
     if 0 < delta < 3600:
-        return f"{max(1, round(delta / 60))} 分钟后"
+        return f"{max(1, (int(delta) + 59) // 60)} 分钟后"
     moment = datetime.fromtimestamp(ts)
     today = datetime.now().date()
     if moment.date() == today:

@@ -57,6 +57,11 @@ BOT_STATE_TTL = 600
 _group_states: dict[str, tuple[dict, float]] = {}
 
 HELP_URL = "https://luna-site-d0gj36nib486137a4-1524033896.tcloudbaseapp.com/index.html"
+REMINDER_TOO_SHORT_LINES = (
+    "……时间太短了。这种事自己记。提醒至少一分钟。",
+    "十秒也要我提醒？自己盯着表去。最短一分钟。",
+    "这种几秒钟的事就别麻烦我了。提醒至少一分钟。",
+)
 
 
 def weather_keyboard() -> dict:
@@ -1175,10 +1180,18 @@ def main() -> int:
                     if is_sister_line and control_enabled("reminder", True):
                         parsed = reminders.maybe_create(group_openid, user_id, speaker, plain)
                         if parsed:
-                            answer = f"记下了。{reminders.format_due(parsed['due'])}，{parsed['text']}。"
+                            too_short = bool(parsed.get("too_short"))
+                            answer = (
+                                random.choice(REMINDER_TOO_SHORT_LINES)
+                                if too_short
+                                else f"记下了。{reminders.format_due(parsed['due'])}，{parsed['text']}。"
+                            )
                             try:
                                 module.send_group_message(token, group_openid, answer, msg_id=message_id)
-                                log(f"reminder created key={cooldown_key} due={parsed['due']}")
+                                if too_short:
+                                    log(f"reminder too short key={cooldown_key}")
+                                else:
+                                    log(f"reminder created key={cooldown_key} due={parsed['due']}")
                                 log_reply(group_openid, user_id, tier, speaker, plain, answer)
                             except Exception as exc:
                                 log(f"reminder reply failed: {exc}")
@@ -1587,10 +1600,18 @@ def main() -> int:
                     if is_sister_line and control_enabled("reminder", True):
                         parsed = reminders.maybe_create(group_openid, user_id, speaker, args)
                         if parsed:
-                            answer = f"记下了。{reminders.format_due(parsed['due'])}，{parsed['text']}。"
+                            too_short = bool(parsed.get("too_short"))
+                            answer = (
+                                random.choice(REMINDER_TOO_SHORT_LINES)
+                                if too_short
+                                else f"记下了。{reminders.format_due(parsed['due'])}，{parsed['text']}。"
+                            )
                             try:
                                 module.send_group_message(token, group_openid, answer, msg_id=message_id)
-                                log(f"reminder created key={cooldown_key} due={parsed['due']}")
+                                if too_short:
+                                    log(f"reminder too short key={cooldown_key}")
+                                else:
+                                    log(f"reminder created key={cooldown_key} due={parsed['due']}")
                                 log_reply(group_openid, user_id, tier, speaker, args, answer)
                             except Exception as exc:
                                 log(f"reminder reply failed: {exc}")
