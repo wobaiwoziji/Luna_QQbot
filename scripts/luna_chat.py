@@ -23,10 +23,26 @@ THREAD_DIR = HERE.parent / "logs" / "luna-thread"
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
 VISION_MODEL = "deepseek-flash"
+FAST_MODEL = "deepseek-flash"
 MAX_INPUT = 300
 MAX_HISTORY = 6
 MAX_GROUPS = 50
 TASK_LENGTH = 120
+
+SIMPLE_PATTERN = re.compile(
+    r"^(?:@某人\s*)?(?:露娜\s*)?"
+    r"(?:早|早上好|早安|晚安|在吗|在不在|你好|hi|hello|哈喽|谢谢|多谢|辛苦了|好梦)"
+    r"[!！。.~～\s]*$",
+    re.I,
+)
+
+_session = requests.Session()
+_session.mount(
+    "https://",
+    requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=0),
+)
+_persona_cache = {"mtime": 0.0, "text": ""}
+_key_cache = {"value": "", "ts": 0.0}
 
 TASK_PATTERN = re.compile(
     r"(python|代码|脚本|程序|函数|报错|debug|bug|sql|html|javascript|java|c\+\+|c#|"
@@ -50,16 +66,29 @@ def log(message: str) -> None:
 
 def persona() -> str:
     try:
-        return PERSONA_PATH.read_text(encoding="utf-8").strip()
+        mtime = PERSONA_PATH.stat().st_mtime
+        if _persona_cache["text"] and _persona_cache["mtime"] == mtime:
+            return _persona_cache["text"]
+        text = PERSONA_PATH.read_text(encoding="utf-8").strip()
+        _persona_cache["text"] = text
+        _persona_cache["mtime"] = mtime
+        return text
     except Exception:
         return "你是《战双帕弥什》的露娜，升格者首领，说话冷淡简短。"
 
 
 def api_key() -> str:
+    now = time.time()
+    if _key_cache["value"] and now - _key_cache["ts"] < 300:
+        return _key_cache["value"]
     try:
         import chat_summary
 
-        return chat_summary.api_key()
+        key = chat_summary.api_key()
+        if key:
+            _key_cache["value"] = key
+            _key_cache["ts"] = now
+        return key
     except Exception:
         return ""
 
@@ -445,6 +474,7 @@ def _image_part(path) -> dict:
 
 
 def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "", target_card: str = "", target_is_sister: bool = False) -> str | None:
+    started = time.time()
     _load_history(group_openid)
     original = (text or "").strip()[:MAX_INPUT]
     if not original and not context:
@@ -622,8 +652,17 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     else:
         messages.append({"role": "user", "content": prompt})
         model = MODEL
+        if (
+            not tool_result
+            and not long_answer
+            and not identity_ask
+            and not target_ask
+            and SIMPLE_PATTERN.match(original)
+        ):
+            model = FAST_MODEL
 
-    response = requests.post(
+    request_started = time.time()
+    response = _session.post(
         API_URL,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={
@@ -669,6 +708,12 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
 
     remember(group_openid, "user", text, speaker=speaker)
     remember(group_openid, "assistant", answer)
+    total_ms = (time.time() - started) * 1000
+    llm_ms = (time.time() - request_started) * 1000
+    log(
+        f"timing group={group_openid[:8]} prep={int(total_ms - llm_ms)}ms "
+        f"llm={int(llm_ms)}ms total={int(total_ms)}ms model={model} chars={len(answer)}"
+    )
     return answer
 
 

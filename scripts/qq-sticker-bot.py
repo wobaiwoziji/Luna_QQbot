@@ -3,7 +3,9 @@
 """Listen for @ messages: reply with a sticker or with IP/character images."""
 
 import importlib.util
+import functools
 import json
+import queue
 import random
 import re
 import sys
@@ -131,6 +133,130 @@ def punish(module, token: str, group_openid: str, user_id: str, message_id: str 
     except Exception as exc:
         log(f"penalty: mute failed user={user_id} ({exc}), 本地禁言兜底")
     penalties[user_id] = time.time() + minutes * 60
+
+
+_reply_queues: dict[str, queue.Queue] = {}
+_reply_queues_guard = threading.Lock()
+
+
+def _reply_worker(group: str, work: queue.Queue) -> None:
+    while True:
+        label, fn, submitted = work.get()
+        try:
+            started = time.time()
+            fn()
+            waited = (started - submitted) * 1000
+            spent = (time.time() - started) * 1000
+            log(f"reply worker {label} group={group[:8]} wait={waited:.0f}ms run={spent:.0f}ms")
+        except Exception as exc:
+            log(f"reply worker failed {label} group={group[:8]}: {exc}")
+        finally:
+            work.task_done()
+
+
+def submit_reply(group: str, label: str, fn) -> None:
+    """按群排队，保证同一个群的回复顺序，不同群并行。"""
+    with _reply_queues_guard:
+        work = _reply_queues.get(group)
+        if work is None:
+            work = queue.Queue()
+            _reply_queues[group] = work
+            threading.Thread(
+                target=_reply_worker, args=(group, work), daemon=True, name=f"reply-{group[:6]}"
+            ).start()
+    work.put((label, fn, time.time()))
+
+
+def send_mention_reply(**kwargs) -> None:
+    module = kwargs["module"]
+    token = kwargs["token"]
+    luna = kwargs["luna"]
+    proactive = kwargs["proactive"]
+    group = kwargs["group"]
+    cooldown_key = kwargs["cooldown_key"]
+    try:
+        answer = luna.reply(
+            group,
+            kwargs["plain"],
+            context=kwargs["context"],
+            sister=kwargs["sister"],
+            respect=kwargs["respect"],
+            optional=kwargs["optional"],
+            source=kwargs["source"],
+            profile=kwargs["profile"],
+            tool_result=kwargs["tool_result"],
+            speaker=kwargs["speaker"],
+            role_card=kwargs["role_card"],
+            privileged=kwargs["privileged"],
+            role_name=kwargs["role_name"],
+            target=kwargs["target"],
+            target_card=kwargs["target_card"],
+            target_is_sister=kwargs["target_is_sister"],
+            images=kwargs["images"],
+        )
+    except Exception as exc:
+        log(f"luna: addressed reply failed: {exc}")
+        return
+    if not answer:
+        log(f"luna: skipped addressed key={cooldown_key}")
+        return
+    try:
+        sent = module.send_group_message(
+            token, group, answer, msg_id=kwargs["message_id"]
+        )
+        log(f"luna: addressed replied key={cooldown_key} id={(sent or {}).get('id')}")
+        log_reply(
+            group, kwargs["user_id"], kwargs["tier"], kwargs["speaker_label"], kwargs["plain"], answer
+        )
+        proactive.mark_replied(group)
+    except Exception as exc:
+        log(f"luna: addressed send failed: {exc}")
+
+
+def send_command_reply(**kwargs) -> None:
+    module = kwargs["module"]
+    token = kwargs["token"]
+    luna = kwargs["luna"]
+    proactive = kwargs["proactive"]
+    group = kwargs["group"]
+    cooldown_key = kwargs["cooldown_key"]
+    try:
+        answer = luna.reply(
+            group,
+            kwargs["args"],
+            context=kwargs["context"],
+            target=kwargs["target"],
+            sister=kwargs["sister"],
+            respect=kwargs["respect"],
+            images=kwargs["images"],
+            profile=kwargs["profile"],
+            tool_result=kwargs["tool_result"],
+            speaker=kwargs["speaker"],
+            role_card=kwargs["role_card"],
+            privileged=kwargs["privileged"],
+            role_name=kwargs["role_name"],
+            target_card=kwargs["target_card"],
+            target_is_sister=kwargs["target_is_sister"],
+        )
+        sent = module.send_group_message(
+            token, group, answer, msg_id=kwargs["message_id"]
+        )
+        log(
+            f"luna replied key={cooldown_key} chars={len(answer)} "
+            f"id={(sent or {}).get('id') if isinstance(sent, dict) else ''}"
+        )
+        log_reply(
+            group, kwargs["user_id"], kwargs["tier"], kwargs["speaker_label"], kwargs["args"], answer
+        )
+        proactive.mark_replied(group)
+    except Exception as exc:
+        log(f"luna failed: {exc}")
+        try:
+            module.send_group_message(
+                token, group, "……现在不想说话。", msg_id=kwargs["message_id"]
+            )
+        except Exception as send_exc:
+            log(f"luna fallback failed: {send_exc}")
 
 
 NAMES_PATH = LOG_DIR / "names.json"
@@ -1001,39 +1127,37 @@ def main() -> int:
                             except Exception as exc:
                                 log(f"luna image hint failed: {exc}")
                             continue
-                    try:
-                        answer = luna.reply(
-                            group_openid,
-                            plain,
-                            context=context_lines,
-                            sister=is_sister_line,
-                            respect=tier == "owner" or user_id in owners or luna.is_respected(speaker),
-                            optional=not tool,
-                            source="mention",
-                            profile=speaker_profile,
-                            tool_result=tool[1] if tool else "",
-                            speaker=reply_speaker,
-                            role_card=roles.card_text(role_card),
-                            privileged=is_privileged,
-                            role_name=role_name,
-                            target=target_name,
-                            target_card=roles.target_card_text(target_role),
-                            target_is_sister=roles.is_sister(target_role),
-                            images=image_paths,
-                        )
-                    except Exception as exc:
-                        log(f"luna: addressed reply failed: {exc}")
-                        continue
-                    if not answer:
-                        log(f"luna: skipped addressed key={cooldown_key}")
-                        continue
-                    try:
-                        sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
-                        log(f"luna: addressed replied key={cooldown_key} id={(sent or {}).get('id')}")
-                        log_reply(group_openid, user_id, tier, speaker, plain, answer)
-                        proactive.mark_replied(group_openid)
-                    except Exception as exc:
-                        log(f"luna: addressed send failed: {exc}")
+                    payload = dict(
+                        module=module,
+                        token=token,
+                        luna=luna,
+                        proactive=proactive,
+                        group=group_openid,
+                        cooldown_key=cooldown_key,
+                        plain=plain,
+                        context=context_lines,
+                        sister=is_sister_line,
+                        respect=tier == "owner" or user_id in owners or luna.is_respected(speaker),
+                        optional=not tool,
+                        source="mention",
+                        profile=speaker_profile,
+                        tool_result=tool[1] if tool else "",
+                        speaker=reply_speaker,
+                        speaker_label=speaker,
+                        role_card=roles.card_text(role_card),
+                        privileged=is_privileged,
+                        role_name=role_name,
+                        target=target_name,
+                        target_card=roles.target_card_text(target_role),
+                        target_is_sister=roles.is_sister(target_role),
+                        images=image_paths,
+                        message_id=message_id,
+                        user_id=user_id,
+                        tier=tier,
+                    )
+                    submit_reply(
+                        group_openid, "mention", functools.partial(send_mention_reply, **payload)
+                    )
                     continue
                 cmd, args = command
                 log(f"command={cmd} args={args!r} group={group_openid}")
@@ -1474,9 +1598,14 @@ def main() -> int:
                             if target_profile:
                                 speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
                         reply_speaker = "姐姐" if is_sister_line else speaker
-                        answer = luna.reply(
-                            group_openid,
-                            args,
+                        payload = dict(
+                            module=module,
+                            token=token,
+                            luna=luna,
+                            proactive=proactive,
+                            group=group_openid,
+                            cooldown_key=cooldown_key,
+                            args=args,
                             context=context,
                             target=target_name,
                             sister=is_sister_line,
@@ -1485,19 +1614,20 @@ def main() -> int:
                             profile=speaker_profile,
                             tool_result=tool[1] if tool else "",
                             speaker=reply_speaker,
+                            speaker_label=speaker,
                             role_card=roles.card_text(role_card),
                             privileged=is_privileged,
                             role_name=role_name,
                             target_card=roles.target_card_text(target_role),
                             target_is_sister=roles.is_sister(target_role),
+                            message_id=message_id,
+                            user_id=user_id,
+                            tier=tier,
                         )
-                        sent = module.send_group_message(token, group_openid, answer, msg_id=message_id)
-                        log(
-                            f"luna replied key={cooldown_key} chars={len(answer)} "
-                            f"id={(sent or {}).get('id') if isinstance(sent, dict) else ''}"
+                        submit_reply(
+                            group_openid, "command", functools.partial(send_command_reply, **payload)
                         )
-                        log_reply(group_openid, user_id, tier, speaker, args, answer)
-                        proactive.mark_replied(group_openid)
+                        continue
                     except Exception as exc:
                         log(f"luna failed: {exc}")
                         try:
