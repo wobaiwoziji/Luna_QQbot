@@ -45,6 +45,8 @@ def build() -> tuple[str, dict]:
         f"{_cmd('/露娜 算一下 ', '🧮 算数')}｜"
         f"{_cmd('/露娜 B站 ', '📺 B站')}｜"
         f"{_cmd('/帮助', '❓ 帮助')}\n"
+        "**🍚 支持**\n"
+        f"🍚 [给露娜买饭]({BASE}/sponsor.html)\n"
         "**📚 资料（带链接图标）**\n"
         f"[使用说明]({BASE}/manual.html)｜"
         f"[更新日志]({BASE}/changelog.html)｜"
@@ -57,6 +59,7 @@ def build() -> tuple[str, dict]:
             "rows": [
                 {
                     "buttons": [
+                        _button("b0", "给露娜买饭", f"{BASE}/sponsor.html"),
                         _button("b1", "使用说明", f"{BASE}/manual.html"),
                         _button("b2", "更新日志", f"{BASE}/changelog.html"),
                     ]
