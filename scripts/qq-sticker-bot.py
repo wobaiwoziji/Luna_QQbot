@@ -167,6 +167,33 @@ def submit_reply(group: str, label: str, fn) -> None:
     work.put((label, fn, time.time()))
 
 
+def send_welcome(**kwargs) -> None:
+    group = kwargs["group"]
+    try:
+        text = kwargs["welcome"].greet(kwargs["speaker"], group)
+        kwargs["module"].send_group_message(
+            kwargs["token"], group, text, msg_id=kwargs["message_id"], msg_seq=2
+        )
+        kwargs["welcome"].mark_welcome(group)
+        log(f"welcome sent group={group[:8]} user={kwargs['user_id'][:8]} text={text!r}")
+    except Exception as exc:
+        log(f"welcome failed group={group[:8]}: {exc}")
+
+
+def _download_images(urls, message_id: str, group: str) -> list[Path]:
+    paths: list[Path] = []
+    for index, url in enumerate((urls or [])[:2]):
+        target = ROOT / "logs" / "luna-images" / f"{message_id}-{index}.jpg"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        downloaded = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        downloaded.raise_for_status()
+        target.write_bytes(downloaded.content)
+        paths.append(target)
+    if paths:
+        log(f"luna: images={len(paths)} group={group[:8]}")
+    return paths
+
+
 def send_mention_reply(**kwargs) -> None:
     module = kwargs["module"]
     token = kwargs["token"]
@@ -174,6 +201,44 @@ def send_mention_reply(**kwargs) -> None:
     proactive = kwargs["proactive"]
     group = kwargs["group"]
     cooldown_key = kwargs["cooldown_key"]
+    images = kwargs["images"]
+    if not images and kwargs.get("image_urls"):
+        try:
+            images = _download_images(kwargs["image_urls"], kwargs["message_id"], group)
+        except Exception as exc:
+            log(f"luna mention image download failed: {exc}")
+        if not images:
+            try:
+                module.send_group_message(
+                    token, group, "……图没收到。重发一次。", msg_id=kwargs["message_id"]
+                )
+            except Exception as exc:
+                log(f"luna image hint failed: {exc}")
+            return
+    tool = None
+    if kwargs.get("tools_enabled") and kwargs.get("tools"):
+        try:
+            tool = kwargs["tools"].run(kwargs["plain"])
+        except Exception as exc:
+            log(f"tool failed key={cooldown_key}: {exc}")
+    if tool:
+        log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
+        direct = kwargs["tool_message"](tool)
+        if direct:
+            try:
+                module.send_group_message(token, group, direct, msg_id=kwargs["message_id"])
+                log_reply(
+                    group,
+                    kwargs["user_id"],
+                    kwargs["tier"],
+                    kwargs["speaker_label"],
+                    kwargs["plain"],
+                    direct,
+                )
+                proactive.mark_replied(group)
+            except Exception as exc:
+                log(f"tool send failed: {exc}")
+            return
     try:
         answer = luna.reply(
             group,
@@ -181,10 +246,10 @@ def send_mention_reply(**kwargs) -> None:
             context=kwargs["context"],
             sister=kwargs["sister"],
             respect=kwargs["respect"],
-            optional=kwargs["optional"],
+            optional=not tool,
             source=kwargs["source"],
             profile=kwargs["profile"],
-            tool_result=kwargs["tool_result"],
+            tool_result=tool[1] if tool else "",
             speaker=kwargs["speaker"],
             role_card=kwargs["role_card"],
             privileged=kwargs["privileged"],
@@ -192,7 +257,7 @@ def send_mention_reply(**kwargs) -> None:
             target=kwargs["target"],
             target_card=kwargs["target_card"],
             target_is_sister=kwargs["target_is_sister"],
-            images=kwargs["images"],
+            images=images,
         )
     except Exception as exc:
         log(f"luna: addressed reply failed: {exc}")
@@ -220,6 +285,41 @@ def send_command_reply(**kwargs) -> None:
     proactive = kwargs["proactive"]
     group = kwargs["group"]
     cooldown_key = kwargs["cooldown_key"]
+    images = kwargs["images"]
+    if not images and kwargs.get("image_urls"):
+        try:
+            images = _download_images(kwargs["image_urls"], kwargs["message_id"], group)
+        except Exception as exc:
+            log(f"luna image download failed: {exc}")
+        if not images:
+            try:
+                module.send_group_message(
+                    token, group, "……图没收到。重发一次。", msg_id=kwargs["message_id"]
+                )
+            except Exception as exc:
+                log(f"luna image hint failed: {exc}")
+            return
+    tool = None
+    if kwargs.get("tools_enabled") and kwargs.get("tools"):
+        try:
+            tool = kwargs["tools"].run(kwargs["args"])
+        except Exception as exc:
+            log(f"tool failed key={cooldown_key}: {exc}")
+    if tool:
+        log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
+        direct = kwargs["tool_message"](tool)
+        if direct:
+            module.send_group_message(token, group, direct, msg_id=kwargs["message_id"])
+            log_reply(
+                group,
+                kwargs["user_id"],
+                kwargs["tier"],
+                kwargs["speaker_label"],
+                kwargs["args"],
+                direct,
+            )
+            proactive.mark_replied(group)
+            return
     try:
         answer = luna.reply(
             group,
@@ -228,9 +328,9 @@ def send_command_reply(**kwargs) -> None:
             target=kwargs["target"],
             sister=kwargs["sister"],
             respect=kwargs["respect"],
-            images=kwargs["images"],
+            images=images,
             profile=kwargs["profile"],
-            tool_result=kwargs["tool_result"],
+            tool_result=tool[1] if tool else "",
             speaker=kwargs["speaker"],
             role_card=kwargs["role_card"],
             privileged=kwargs["privileged"],
@@ -974,15 +1074,18 @@ def main() -> int:
                     and welcome.size(group_openid) >= welcome.MIN_MEMBERS
                     and not welcome.too_soon(group_openid)
                 ):
-                    text = welcome.greet(speaker, group_openid)
-                    try:
-                        module.send_group_message(
-                            token, group_openid, text, msg_id=message_id, msg_seq=2
-                        )
-                        welcome.mark_welcome(group_openid)
-                        log(f"welcome sent group={group_openid[:8]} user={user_id[:8]} text={text!r}")
-                    except Exception as exc:
-                        log(f"welcome failed group={group_openid[:8]}: {exc}")
+                    payload = dict(
+                        module=module,
+                        token=token,
+                        welcome=welcome,
+                        group=group_openid,
+                        message_id=message_id,
+                        speaker=speaker,
+                        user_id=user_id,
+                    )
+                    submit_reply(
+                        group_openid, "welcome", functools.partial(send_welcome, **payload)
+                    )
 
                 if event == "GROUP_MESSAGE_CREATE":
                     member = bot_id
@@ -1062,17 +1165,6 @@ def main() -> int:
                         log(f"luna: addressed cooldown key={cooldown_key}")
                         continue
                     last_luna[cooldown_key] = now
-                    tool = tools.run(plain) if control_enabled("tools", True) else None
-                    if tool:
-                        log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
-                    direct = tool_message(tool)
-                    if direct:
-                        try:
-                            module.send_group_message(token, group_openid, direct, msg_id=message_id)
-                            log_reply(group_openid, user_id, tier, speaker, plain, direct)
-                        except Exception as exc:
-                            log(f"tool send failed: {exc}")
-                        continue
                     recent = chat.history(group_openid, limit=6)
                     recent_rows = []
                     for item in recent:
@@ -1102,24 +1194,13 @@ def main() -> int:
                         if target_profile:
                             speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
                     reply_speaker = "姐姐" if is_sister_line else speaker
-                    image_paths = []
+                    image_urls = []
                     if has_image:
-                        try:
-                            urls = jelly.image_urls(data.get("attachments"))[:2] or jelly.deep_image_urls(data)[:2]
-                            for index, url in enumerate(urls):
-                                target = ROOT / "logs" / "luna-images" / f"{message_id}-{index}.jpg"
-                                target.parent.mkdir(parents=True, exist_ok=True)
-                                downloaded = requests.get(
-                                    url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20
-                                )
-                                downloaded.raise_for_status()
-                                target.write_bytes(downloaded.content)
-                                image_paths.append(target)
-                            if image_paths:
-                                log(f"luna: images={len(image_paths)} group={group_openid[:8]}")
-                        except Exception as exc:
-                            log(f"luna mention image download failed: {exc}")
-                        if not image_paths:
+                        image_urls = (
+                            jelly.image_urls(data.get("attachments"))[:2]
+                            or jelly.deep_image_urls(data)[:2]
+                        )
+                        if not image_urls:
                             try:
                                 module.send_group_message(
                                     token, group_openid, "……图没收到。重发一次。", msg_id=message_id
@@ -1138,10 +1219,11 @@ def main() -> int:
                         context=context_lines,
                         sister=is_sister_line,
                         respect=tier == "owner" or user_id in owners or luna.is_respected(speaker),
-                        optional=not tool,
                         source="mention",
                         profile=speaker_profile,
-                        tool_result=tool[1] if tool else "",
+                        tools=tools,
+                        tools_enabled=control_enabled("tools", True),
+                        tool_message=tool_message,
                         speaker=reply_speaker,
                         speaker_label=speaker,
                         role_card=roles.card_text(role_card),
@@ -1150,7 +1232,8 @@ def main() -> int:
                         target=target_name,
                         target_card=roles.target_card_text(target_role),
                         target_is_sister=roles.is_sister(target_role),
-                        images=image_paths,
+                        images=[],
+                        image_urls=image_urls,
                         message_id=message_id,
                         user_id=user_id,
                         tier=tier,
@@ -1437,22 +1520,22 @@ def main() -> int:
                             log(f"luna capability failed: {exc}")
                         continue
 
-                    image_paths = []
-                    try:
-                        urls = jelly.image_urls(data.get("attachments"))[:2] or jelly.deep_image_urls(data)[:2]
-                        for index, url in enumerate(urls):
-                            target = ROOT / "logs" / "luna-images" / f"{message_id}-{index}.jpg"
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            downloaded = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-                            downloaded.raise_for_status()
-                            target.write_bytes(downloaded.content)
-                            image_paths.append(target)
-                        if image_paths:
-                            log(f"luna: images={len(image_paths)} group={group_openid[:8]}")
-                    except Exception as exc:
-                        log(f"luna image download failed: {exc}")
+                    image_urls = []
+                    if has_image:
+                        image_urls = (
+                            jelly.image_urls(data.get("attachments"))[:2]
+                            or jelly.deep_image_urls(data)[:2]
+                        )
+                        if not image_urls:
+                            try:
+                                module.send_group_message(
+                                    token, group_openid, "……图没收到。重发一次。", msg_id=message_id
+                                )
+                            except Exception as exc:
+                                log(f"luna image hint failed: {exc}")
+                            continue
 
-                    if image_paths and not args:
+                    if image_urls and not args:
                         args = "看看这张图"
 
                     if not args:
@@ -1567,14 +1650,6 @@ def main() -> int:
                             )
                             continue
                     try:
-                        tool = tools.run(args) if control_enabled("tools", True) else None
-                        if tool:
-                            log(f"tool {tool[0]} key={cooldown_key} result={tool[1][:80]}")
-                        direct = tool_message(tool)
-                        if direct:
-                            module.send_group_message(token, group_openid, direct, msg_id=message_id)
-                            log_reply(group_openid, user_id, tier, speaker, args, direct)
-                            continue
                         respect = (
                             (bool(target_id) and target_id in owners)
                             or (bool(user_id) and user_id in owners)
@@ -1610,9 +1685,12 @@ def main() -> int:
                             target=target_name,
                             sister=is_sister_line,
                             respect=respect,
-                            images=image_paths,
+                            images=[],
+                            image_urls=image_urls,
                             profile=speaker_profile,
-                            tool_result=tool[1] if tool else "",
+                            tools=tools,
+                            tools_enabled=control_enabled("tools", True),
+                            tool_message=tool_message,
                             speaker=reply_speaker,
                             speaker_label=speaker,
                             role_card=roles.card_text(role_card),
