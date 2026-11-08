@@ -735,6 +735,7 @@ def main() -> int:
     summary = load_module("chat_summary.py", "chat_summary")
     jelly = load_module("qq-jelly.py", "qq_jelly")
     help_card = load_module("qq-help-card.py", "help_card")
+    help_menu = load_module("luna_help_menu.py", "luna_help_menu")
     luna = load_module("luna_chat.py", "luna_chat")
     roles = load_module("luna_roles.py", "luna_roles")
     proactive = load_module("luna_proactive.py", "luna_proactive")
@@ -1249,25 +1250,51 @@ def main() -> int:
                     now = time.time()
                     if now - last_help.get(group_openid, 0.0) >= HELP_COOLDOWN:
                         last_help[group_openid] = now
+                        menu_text, menu_keyboard = help_menu.build()
                         try:
-                            card = help_card.build()
-                            module.send_group_image(
-                                token, group_openid, card, card.name, msg_id=message_id, msg_seq=1
-                            )
-                            module.send_group_message(
+                            module.send_group_markdown(
                                 token,
                                 group_openid,
-                                f"使用说明：{HELP_URL}",
+                                menu_text,
+                                keyboard=menu_keyboard,
                                 msg_id=message_id,
-                                msg_seq=2,
+                                msg_seq=1,
                             )
-                            log(f"help card+link sent group={group_openid}")
+                            log(f"help markdown+keyboard sent group={group_openid}")
                         except Exception as exc:
-                            log(f"help send failed: {exc}")
+                            log(f"help keyboard failed: {exc}")
                             try:
-                                module.send_group_message(token, group_openid, HELP_TEXT, msg_id=message_id)
-                            except Exception as send_exc:
-                                log(f"help text failed: {send_exc}")
+                                module.send_group_markdown(
+                                    token,
+                                    group_openid,
+                                    menu_text,
+                                    msg_id=message_id,
+                                    msg_seq=1,
+                                )
+                                log(f"help markdown sent group={group_openid}")
+                            except Exception as markdown_exc:
+                                log(f"help markdown failed: {markdown_exc}")
+                                try:
+                                    card = help_card.build()
+                                    module.send_group_image(
+                                        token, group_openid, card, card.name, msg_id=message_id, msg_seq=1
+                                    )
+                                    module.send_group_message(
+                                        token,
+                                        group_openid,
+                                        f"使用说明：{HELP_URL}",
+                                        msg_id=message_id,
+                                        msg_seq=2,
+                                    )
+                                    log(f"help card+link sent group={group_openid}")
+                                except Exception as card_exc:
+                                    log(f"help send failed: {card_exc}")
+                                    try:
+                                        module.send_group_message(
+                                            token, group_openid, HELP_TEXT, msg_id=message_id
+                                        )
+                                    except Exception as send_exc:
+                                        log(f"help text failed: {send_exc}")
                     continue
 
                 if cmd in ("撤回", "recall"):

@@ -131,7 +131,7 @@ def open_gateway(url: str, token: str, shards: int, intents: int):
             "token": f"QQBot {token}",
             "intents": intents,
             "shard": [0, shards],
-            "properties": {"$os": "windows", "$browser": "luna-bot", "$device": "luna-bot"},
+            "properties": {"$os": "windows", "$browser": "mywork", "$device": "mywork"},
         },
     }
     ws.send(json.dumps(identify))
@@ -212,11 +212,40 @@ def send_group_message(token: str, group_openid: str, content: str, msg_id: str 
         data = group_request("POST", f"/v2/groups/{group_openid}/messages", token, json=payload)
     except RuntimeError as exc:
         if "40034105" in str(exc):
-            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」") from exc
+            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」") from exc
         raise
     code = data.get("code") if isinstance(data, dict) else None
     if code == 40034105:
-        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」")
+        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」")
+    if code not in (None, 0, 304023, 304024):
+        raise RuntimeError(f"发送失败: {data}")
+    return data
+
+
+def send_group_markdown(
+    token: str,
+    group_openid: str,
+    content: str,
+    keyboard: dict | None = None,
+    msg_id: str | None = None,
+    msg_seq: int = 1,
+) -> dict:
+    """发送群 Markdown 消息；keyboard 使用自定义按钮布局。"""
+    payload: dict = {"msg_type": 2, "markdown": {"content": content}}
+    if keyboard:
+        payload["keyboard"] = keyboard
+    if msg_id:
+        payload["msg_id"] = msg_id
+        payload["msg_seq"] = int(msg_seq)
+    try:
+        data = group_request("POST", f"/v2/groups/{group_openid}/messages", token, json=payload)
+    except RuntimeError as exc:
+        if "40034105" in str(exc):
+            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」") from exc
+        raise
+    code = data.get("code") if isinstance(data, dict) else None
+    if code == 40034105:
+        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」")
     if code not in (None, 0, 304023, 304024):
         raise RuntimeError(f"发送失败: {data}")
     return data
@@ -235,7 +264,7 @@ def send_group_file(token: str, group_openid: str, path: Path, file_name: str) -
         upload = group_request("POST", f"/v2/groups/{group_openid}/files", token, json=payload)
     except RuntimeError as exc:
         if "40034105" in str(exc):
-            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」") from exc
+            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」") from exc
         raise
     code = upload.get("code") if isinstance(upload, dict) else None
     if code not in (None, 0):
@@ -250,11 +279,11 @@ def send_group_file(token: str, group_openid: str, path: Path, file_name: str) -
         result = group_request("POST", f"/v2/groups/{group_openid}/messages", token, json=media_payload)
     except RuntimeError as exc:
         if "40034105" in str(exc):
-            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」") from exc
+            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」") from exc
         raise
     result_code = result.get("code") if isinstance(result, dict) else None
     if result_code == 40034105:
-        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」")
+        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」")
     if result_code not in (None, 0, 304023, 304024):
         raise RuntimeError(f"文件消息发送失败: {result}")
     return result
@@ -285,7 +314,7 @@ def send_group_image(
         upload = group_request("POST", f"/v2/groups/{group_openid}/files", token, json=payload)
     except RuntimeError as exc:
         if "40034105" in str(exc):
-            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」") from exc
+            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」") from exc
         raise
     code = upload.get("code") if isinstance(upload, dict) else None
     if code not in (None, 0):
@@ -303,11 +332,11 @@ def send_group_image(
         result = group_request("POST", f"/v2/groups/{group_openid}/messages", token, json=media_payload)
     except RuntimeError as exc:
         if "40034105" in str(exc):
-            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」") from exc
+            raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」") from exc
         raise
     result_code = result.get("code") if isinstance(result, dict) else None
     if result_code == 40034105:
-        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 中开启「允许主动发言」")
+        raise RuntimeError("主动消息无权限：请群主在 群设置 → 机器人 → 升格网络 中开启「允许主动发言」")
     if result_code not in (None, 0, 304023, 304024):
         raise RuntimeError(f"图片消息发送失败: {result}")
     return result
@@ -342,13 +371,13 @@ def pick_local_luna_line() -> str:
 
 LUNA_FORMATS = [
     ("人类，今天给你们一句话：", "也送给你们。"),
-    ("我昨天晚上在网上看到了这么一句话：", "也送给你们。"),
-    ("今天有很多声音。这一句，我留给了你们：", "别让它白白消失。"),
-    ("人类，今天从一堆消息里捞到一句话：", "拿好，不用谢。"),
-    ("我在嘈杂的声音里，听见了这句话：", "现在，把它交给你们。"),
-    ("安静下来的时候，我翻到一句话：", "顺手带给你们。"),
+    ("我昨天晚上在升格网络上看到了这么一句话：", "也送给你们。"),
+    ("升格网络里每天都有很多声音。今天这一句，我留给了你们：", "别让它白白消失。"),
+    ("人类，今天从升格网络里捞到一句话：", "拿好，不用谢。"),
+    ("我在帕弥什的噪声里，听见了这句话：", "现在，把它交给你们。"),
+    ("升格网络安静下来的时候，我翻到一句话：", "顺手带给你们。"),
     ("这句话，让我想起很久以前的事。给你们看看：", "希望你们也能读懂。"),
-    ("人类，今天这句话，是我在角落里捡到的：", "不值钱，但我想给你们。"),
+    ("人类，今天这句话，是我在升格网络的角落里捡到的：", "不值钱，但我想给你们。"),
     ("天亮之前，我看到了一句话：", "现在给你们，应该还不算晚。"),
     ("人类，今天没有战报，只有一句话：", "看完就去忙吧。"),
     ("乐园还没有建成。先给你们一句话：", "等建好了，再请你们来。"),
@@ -358,7 +387,7 @@ LUNA_FORMATS = [
 LUNA_LOCAL_FORMATS = [
     ("人类，今天没有别人的句子。我说一句给你们听：", "记住也好，忘了也罢。"),
     ("今天不读别人的话。人类，听我说一句：", "就这些。"),
-    ("外面很吵。今天，说一句我自己的话：", "说完就安静了。"),
+    ("升格网络很吵。今天，说一句我自己的话：", "说完就安静了。"),
     ("人类，这句话不是从别处看来的。是我自己的：", "给你们。"),
     ("偶尔，我也会想对你们说点什么：", "就这样。"),
 ]
@@ -908,7 +937,7 @@ def cmd_test_groups(args) -> int:
                     send_group_message(
                         token,
                         group_openid,
-                        "📢 测试消息：机器人连接正常 ✅",
+                        "📢 测试消息：升格网络连接正常 ✅",
                     )
                     log(f"主动消息成功: {group_openid}")
                 except Exception as exc:
@@ -1219,7 +1248,7 @@ def main() -> int:
     test_push = sub.add_parser("push-test-groups", help="向已保存的测试群发送一条主动测试消息")
     test_push.add_argument("--config", default=str(CONFIG))
     test_push.add_argument("--group", default=None, help="只发送到指定 group_openid")
-    test_push.add_argument("--text", default="📢 测试消息：机器人连接正常 ✅")
+    test_push.add_argument("--text", default="📢 测试消息：升格网络连接正常 ✅")
     test_push.set_defaults(func=cmd_test_push)
 
     send_image = sub.add_parser("send-image", help="向群发送一张图片")
