@@ -57,6 +57,45 @@ BOT_STATE_TTL = 600
 _group_states: dict[str, tuple[dict, float]] = {}
 
 HELP_URL = "https://luna-site-d0gj36nib486137a4-1524033896.tcloudbaseapp.com/index.html"
+WEATHER_MORE_URL = HELP_URL.rsplit("/", 1)[0] + "/manual.html#tools"
+
+
+def weather_keyboard() -> dict:
+    return {
+        "content": {
+            "rows": [
+                {
+                    "buttons": [
+                        {
+                            "id": "w1",
+                            "render_data": {"label": "查天气", "visited_label": "查天气", "style": 1},
+                            "action": {
+                                "type": 2,
+                                "permission": {"type": 2},
+                                "data": "/天气 ",
+                                "enter": False,
+                                "unsupport_tips": "请升级 QQ",
+                            },
+                        },
+                        {
+                            "id": "w2",
+                            "render_data": {
+                                "label": "更多天气功能",
+                                "visited_label": "更多天气功能",
+                                "style": 1,
+                            },
+                            "action": {
+                                "type": 0,
+                                "permission": {"type": 2},
+                                "data": WEATHER_MORE_URL,
+                                "unsupport_tips": "请升级 QQ",
+                            },
+                        },
+                    ]
+                }
+            ]
+        }
+    }
 
 HINT_TEXT = (
     "没找到「{name}」的图。可以试 IP_角色名，比如 原神_雷电将军、东方_灵梦，"
@@ -736,6 +775,7 @@ def main() -> int:
     jelly = load_module("qq-jelly.py", "qq_jelly")
     help_card = load_module("qq-help-card.py", "help_card")
     help_menu = load_module("luna_help_menu.py", "luna_help_menu")
+    weather = load_module("luna_weather.py", "luna_weather")
     luna = load_module("luna_chat.py", "luna_chat")
     roles = load_module("luna_roles.py", "luna_roles")
     proactive = load_module("luna_proactive.py", "luna_proactive")
@@ -926,6 +966,7 @@ def main() -> int:
     last_jelly_hint = {}
     last_help = {}
     last_unknown = {}
+    last_weather = {}
     last_luna = {}
     task_hits = {}
     violence_hits = {}
@@ -1245,6 +1286,78 @@ def main() -> int:
                     continue
                 cmd, args = command
                 log(f"command={cmd} args={args!r} group={group_openid}")
+
+                if cmd in ("天气", "weather"):
+                    now = time.time()
+                    if now - last_weather.get(group_openid, 0.0) < 20:
+                        log(f"weather: cooldown group={group_openid[:8]}")
+                        continue
+                    last_weather[group_openid] = now
+                    city = args.strip()
+                    keyboard = weather_keyboard()
+                    if not city:
+                        text = (
+                            "**⚠️ 您还没有输入地区哦**\n\n"
+                            "使用说明：\n`/天气 [地名]`\n\n"
+                            "示例：\n`/天气 北京`"
+                        )
+                        try:
+                            module.send_group_markdown(
+                                token,
+                                group_openid,
+                                text,
+                                keyboard=keyboard,
+                                msg_id=message_id,
+                                msg_seq=1,
+                            )
+                        except Exception as exc:
+                            log(f"weather help failed: {exc}")
+                            try:
+                                module.send_group_message(
+                                    token,
+                                    group_openid,
+                                    "用法：/天气 [地名]\n示例：/天气 北京",
+                                    msg_id=message_id,
+                                )
+                            except Exception as send_exc:
+                                log(f"weather help text failed: {send_exc}")
+                        continue
+                    try:
+                        data = weather.fetch(city)
+                        path = weather.render(data)
+                        try:
+                            module.send_group_image(
+                                token,
+                                group_openid,
+                                path,
+                                path.name,
+                                msg_id=message_id,
+                                msg_seq=1,
+                                keyboard=keyboard,
+                            )
+                        except Exception as keyboard_exc:
+                            log(f"weather keyboard image failed: {keyboard_exc}")
+                            module.send_group_image(
+                                token,
+                                group_openid,
+                                path,
+                                path.name,
+                                msg_id=message_id,
+                                msg_seq=1,
+                            )
+                        log(f"weather sent city={city} group={group_openid[:8]}")
+                    except Exception as exc:
+                        log(f"weather failed city={city}: {exc}")
+                        try:
+                            module.send_group_message(
+                                token,
+                                group_openid,
+                                f"没查到「{city}」的天气。",
+                                msg_id=message_id,
+                            )
+                        except Exception as send_exc:
+                            log(f"weather error send failed: {send_exc}")
+                    continue
 
                 if cmd in ("帮助", "help", "菜单", "使用说明"):
                     now = time.time()

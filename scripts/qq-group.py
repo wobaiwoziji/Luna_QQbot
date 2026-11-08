@@ -301,6 +301,7 @@ def send_group_image(
     file_name: str,
     msg_id: str | None = None,
     msg_seq: int = 1,
+    keyboard: dict | None = None,
 ) -> dict:
     raw = path.read_bytes()
     encoded = base64.b64encode(raw).decode("ascii")
@@ -325,6 +326,8 @@ def send_group_image(
     log(f"图片已上传: file_uuid={upload.get('file_uuid')} ttl={upload.get('ttl')}")
 
     media_payload = {"msg_type": 7, "media": {"file_info": file_info}}
+    if keyboard:
+        media_payload["keyboard"] = keyboard
     if msg_id:
         media_payload["msg_id"] = msg_id
         media_payload["msg_seq"] = int(msg_seq)
