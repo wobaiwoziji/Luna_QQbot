@@ -57,7 +57,6 @@ BOT_STATE_TTL = 600
 _group_states: dict[str, tuple[dict, float]] = {}
 
 HELP_URL = "https://luna-site-d0gj36nib486137a4-1524033896.tcloudbaseapp.com/index.html"
-WEATHER_MORE_URL = HELP_URL.rsplit("/", 1)[0] + "/manual.html#tools"
 
 
 def weather_keyboard() -> dict:
@@ -76,21 +75,7 @@ def weather_keyboard() -> dict:
                                 "enter": False,
                                 "unsupport_tips": "请升级 QQ",
                             },
-                        },
-                        {
-                            "id": "w2",
-                            "render_data": {
-                                "label": "更多天气功能",
-                                "visited_label": "更多天气功能",
-                                "style": 1,
-                            },
-                            "action": {
-                                "type": 0,
-                                "permission": {"type": 2},
-                                "data": WEATHER_MORE_URL,
-                                "unsupport_tips": "请升级 QQ",
-                            },
-                        },
+                        }
                     ]
                 }
             ]
