@@ -19,6 +19,62 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = ROOT / "logs" / "reminders.json"
 INTENT = re.compile(r"(提醒我|提醒一下|叫我|记得提醒|到时候提醒|提醒下)")
 MAX_DAYS = 365
+SHORT_PATTERN = re.compile(
+    r"([0-9]+|[零一二两三四五六七八九十]+|半)\s*(秒钟?|分钟?|分|个?小时|钟头)\s*(?:后|以后|之后)"
+)
+CN_NUMBER = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
+
+
+def _number(value: str):
+    if value == "半":
+        return 0.5
+    if value.isdigit():
+        return int(value)
+    if "十" in value:
+        head, _, tail = value.partition("十")
+        tens = CN_NUMBER.get(head, 1) if head else 1
+        ones = CN_NUMBER.get(tail, 0) if tail else 0
+        return tens * 10 + ones
+    return CN_NUMBER.get(value)
+
+
+def _parse_short(text: str, now: datetime) -> dict | None:
+    matched = SHORT_PATTERN.search(text or "")
+    if not matched:
+        return None
+    amount = _number(matched.group(1))
+    if amount is None:
+        return None
+    unit = matched.group(2)
+    if "秒" in unit:
+        seconds = amount
+    elif "小时" in unit or "钟头" in unit:
+        seconds = amount * 3600
+    else:
+        seconds = amount * 60
+    if seconds < 1 or seconds > MAX_DAYS * 86400:
+        return None
+    what = SHORT_PATTERN.sub("", text)
+    what = re.sub(r"^\s*(?:提醒我|提醒|记得|到点提醒我)\s*", "", what)
+    what = re.sub(r"^\s*(?:叫|让)我\s*", "", what)
+    what = re.sub(r"^\s*去\s*", "", what)
+    what = what.strip(" ，,。.！!？?~～")
+    if not what:
+        what = "该做说好的事了"
+    return {"due": int((now + timedelta(seconds=seconds)).timestamp()), "text": what[:60]}
 
 
 def log(message: str) -> None:
@@ -42,10 +98,13 @@ def save(items: list[dict]) -> None:
 
 
 def parse(text: str, now: datetime | None = None) -> dict | None:
+    now = now or datetime.now()
+    short = _parse_short(text, now)
+    if short:
+        return short
     key = chat_summary.api_key()
     if not key:
         return None
-    now = now or datetime.now()
     prompt = (
         f"现在是 {now:%Y-%m-%d %H:%M}（周{'一二三四五六日'[now.weekday()]}）。\n"
         f"用户说：「{text[:120]}」\n"
@@ -122,6 +181,11 @@ def take_due(now: float | None = None) -> list[dict]:
 
 
 def format_due(ts: int) -> str:
+    delta = ts - time.time()
+    if 0 < delta < 120:
+        return f"{max(1, round(delta))} 秒后"
+    if 0 < delta < 3600:
+        return f"{max(1, round(delta / 60))} 分钟后"
     moment = datetime.fromtimestamp(ts)
     today = datetime.now().date()
     if moment.date() == today:

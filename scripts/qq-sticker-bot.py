@@ -884,25 +884,43 @@ def main() -> int:
     log("memory index loop started")
 
     def reminder_loop():
-        time.sleep(15)
+        time.sleep(5)
         while True:
             try:
                 due = reminders.take_due()
                 if due:
                     reminder_token = module.get_access_token(app_id, client_secret)
                     for item in due:
-                        try:
-                            module.send_group_message(
-                                reminder_token,
-                                item.get("group", ""),
-                                f"时间到了。{item.get('text', '')}。",
-                            )
-                            log(f"reminder sent group={str(item.get('group'))[:8]}")
-                        except Exception as exc:
-                            log(f"reminder send failed: {exc}")
+                        group = str(item.get("group", ""))
+                        user = str(item.get("user") or "")
+                        text = str(item.get("text") or "")
+                        content = f"时间到了。{text}。"
+                        sent = False
+                        if user:
+                            try:
+                                module.send_group_markdown(
+                                    reminder_token,
+                                    group,
+                                    f'<qqbot-at-user id="{user}" /> {content}',
+                                )
+                                sent = True
+                            except Exception as exc:
+                                log(f"reminder markdown failed: {exc}")
+                        if not sent:
+                            try:
+                                module.send_group_message(
+                                    reminder_token,
+                                    group,
+                                    f"<@{user}> {content}" if user else content,
+                                )
+                                sent = True
+                            except Exception as exc:
+                                log(f"reminder send failed: {exc}")
+                        if sent:
+                            log(f"reminder sent group={group[:8]} user={user[:8]}")
             except Exception as exc:
                 log(f"reminder loop failed: {exc}")
-            time.sleep(60)
+            time.sleep(3)
 
     threading.Thread(target=reminder_loop, daemon=True).start()
     log("reminder loop started")
