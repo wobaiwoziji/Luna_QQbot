@@ -952,6 +952,7 @@ def main() -> int:
     last_help = {}
     last_unknown = {}
     last_weather = {}
+    last_weather_hint = {}
     last_luna = {}
     task_hits = {}
     violence_hits = {}
@@ -1274,13 +1275,12 @@ def main() -> int:
 
                 if cmd in ("天气", "weather"):
                     now = time.time()
-                    if now - last_weather.get(group_openid, 0.0) < 20:
-                        log(f"weather: cooldown group={group_openid[:8]}")
-                        continue
-                    last_weather[group_openid] = now
                     city = args.strip()
                     keyboard = weather_keyboard()
                     if not city:
+                        if now - last_weather_hint.get(group_openid, 0.0) < 5:
+                            continue
+                        last_weather_hint[group_openid] = now
                         text = (
                             "**⚠️ 您还没有输入地区哦**\n\n"
                             "使用说明：\n`/天气 [地名]`\n\n"
@@ -1307,6 +1307,10 @@ def main() -> int:
                             except Exception as send_exc:
                                 log(f"weather help text failed: {send_exc}")
                         continue
+                    if now - last_weather.get(group_openid, 0.0) < 10:
+                        log(f"weather: cooldown group={group_openid[:8]}")
+                        continue
+                    last_weather[group_openid] = now
                     try:
                         data = weather.fetch(city)
                         path = weather.render(data)
