@@ -18,6 +18,7 @@ import token_usage
 
 HERE = Path(__file__).resolve().parent
 PERSONA_PATH = HERE / "luna-persona.txt"
+PERSONA_EXTRA_PATH = HERE.parent / "logs" / "luna-persona.json"
 LORE_PATH = HERE / "luna-lore.txt"
 THREAD_DIR = HERE.parent / "logs" / "luna-thread"
 API_URL = "https://api.deepseek.com/chat/completions"
@@ -41,7 +42,7 @@ _session.mount(
     "https://",
     requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=0),
 )
-_persona_cache = {"mtime": 0.0, "text": ""}
+_persona_cache = {"mtime": 0.0, "extra_mtime": 0.0, "text": ""}
 _key_cache = {"value": "", "ts": 0.0}
 
 TASK_PATTERN = re.compile(
@@ -67,11 +68,29 @@ def log(message: str) -> None:
 def persona() -> str:
     try:
         mtime = PERSONA_PATH.stat().st_mtime
-        if _persona_cache["text"] and _persona_cache["mtime"] == mtime:
+        extra_mtime = PERSONA_EXTRA_PATH.stat().st_mtime if PERSONA_EXTRA_PATH.exists() else 0.0
+        if (
+            _persona_cache["text"]
+            and _persona_cache["mtime"] == mtime
+            and _persona_cache["extra_mtime"] == extra_mtime
+        ):
             return _persona_cache["text"]
         text = PERSONA_PATH.read_text(encoding="utf-8").strip()
+        try:
+            data = json.loads(PERSONA_EXTRA_PATH.read_text(encoding="utf-8"))
+            entries = data.get("entries") if isinstance(data, dict) else []
+        except Exception:
+            entries = []
+        for entry in entries or []:
+            if not isinstance(entry, dict) or not entry.get("enabled"):
+                continue
+            title = str(entry.get("title") or "").strip()
+            content = str(entry.get("content") or "").strip()
+            if title and content:
+                text += f"\n\n【自定义词条·{title}】\n{content}"
         _persona_cache["text"] = text
         _persona_cache["mtime"] = mtime
+        _persona_cache["extra_mtime"] = extra_mtime
         return text
     except Exception:
         return "你是《战双帕弥什》的露娜，升格者首领，说话冷淡简短。"
