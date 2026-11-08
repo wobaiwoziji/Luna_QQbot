@@ -546,19 +546,21 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         )
     if target_card:
         if target_is_sister:
-            extra_blocks.append(
-                "【被提到的人】群里被 @ 的人是另一位姐姐，不是当前说话的人。"
-                "如果说话的人在问「他是谁 / 这个人是谁」，直接用这个身份回答，不要说自己没有记录。"
-                "不要用群昵称、群友名字或 QQ 名字称呼她；只叫「姐姐」，需要区分时说「空中花园的姐姐」或「另一位姐姐」。\n"
-                + target_card.strip()
-            )
+            target_label = "另一位姐姐"
         else:
-            who = f"「{target}」" if target else "被 @ 的人"
-            extra_blocks.append(
-                f"【被提到的人】群里被 @ 的人是{who}，不是当前说话的人。"
-                "如果说话的人在问「他是谁 / 这个人是谁」，直接用这个身份回答，不要说自己没有记录。\n"
-                + target_card.strip()
-            )
+            target_label = target or "被 @ 的人"
+        speaker_label = "姐姐" if sister else (role_name or "普通群友")
+        extra_blocks.append(
+            f"【被 @ 的人，不是当前说话的人】群里被 @ 的人是「{target_label}」。"
+            f"当前说话的人是「{speaker_label}」。"
+            "如果说话的人在问「他是谁 / 她是谁 / 这个人是谁」，必须用"
+            f"「她是{target_label}」「被 @ 的是{target_label}」这种句式回答；"
+            f"不要用「{target_label}，……」这种像在叫对方的句式，也不要把两个人的身份混在一起。"
+            "不要用群昵称、群友名字或 QQ 名字称呼有身份的人。"
+            + ("回答姐姐时先应一声「姐姐」，不要用对下属的语气。" if sister else "")
+            + "\n"
+            + target_card.strip()
+        )
     elif target:
         extra_blocks.append(f"【被提到的人】群里被 @ 的人是「{target}」，不是当前说话的人。")
     if tool_result:

@@ -126,9 +126,15 @@ def identity_line(role: dict) -> str:
 
 
 def target_card_text(role: dict) -> str:
-    """被 @ 的人的身份卡：把「说话的人」改成「被 @ 的人」。"""
+    """被 @ 的人的身份卡：把「对方/说话的人」改成「被 @ 的人」。"""
     text = card_text(role)
-    return text.replace("说话的人是", "被 @ 的人是") if text else ""
+    if not text:
+        return ""
+    return (
+        text.replace("【对方身份", "【被 @ 的人的身份")
+        .replace("对方是", "被 @ 的人是")
+        .replace("说话的人是", "被 @ 的人是")
+    )
 
 
 def _known_groups() -> list[str]:

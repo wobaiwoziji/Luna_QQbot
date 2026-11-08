@@ -1234,25 +1234,32 @@ def main() -> int:
                             item_name = "姐姐"
                         elif roles.is_sister(item_role):
                             item_name = "另一位姐姐"
+                        elif item_role:
+                            item_name = roles.display(item_role) or item.get("name") or "群友"
                         else:
                             item_name = item.get("name") or "群友"
                         recent_rows.append(f"{item_name}：{str(item.get('text', ''))[:60]}")
                     context_lines = "\n".join(recent_rows)
                     speaker_profile = (
                         profiles.summary(user_id)
-                        if control_enabled("profile", True) and not is_sister_line
+                        if control_enabled("profile", True) and not role_card
                         else ""
                     )
                     if (
                         target_id
                         and target_id != user_id
                         and control_enabled("profile", True)
-                        and not roles.is_sister(target_role)
+                        and not target_role
                     ):
                         target_profile = profiles.summary(target_id)
                         if target_profile:
                             speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
-                    reply_speaker = "姐姐" if is_sister_line else speaker
+                    reply_speaker = "姐姐" if is_sister_line else (role_name or speaker)
+                    target_display = (
+                        "另一位姐姐"
+                        if roles.is_sister(target_role)
+                        else (roles.display(target_role) or target_name)
+                    ) if target_role else target_name
                     image_urls = []
                     if has_image:
                         image_urls = (
@@ -1288,7 +1295,7 @@ def main() -> int:
                         role_card=roles.card_text(role_card),
                         privileged=is_privileged,
                         role_name=role_name,
-                        target=target_name,
+                        target=target_display,
                         target_card=roles.target_card_text(target_role),
                         target_is_sister=roles.is_sister(target_role),
                         images=[],
@@ -1828,19 +1835,24 @@ def main() -> int:
                             save_owners(owners)
                         speaker_profile = (
                             profiles.summary(user_id)
-                            if control_enabled("profile", True) and not is_sister_line
+                            if control_enabled("profile", True) and not role_card
                             else ""
                         )
                         if (
                             target_id
                             and target_id != user_id
                             and control_enabled("profile", True)
-                            and not roles.is_sister(target_role)
+                            and not target_role
                         ):
                             target_profile = profiles.summary(target_id)
                             if target_profile:
                                 speaker_profile = f"{speaker_profile}\n被 @ 的人：{target_profile}".strip()
-                        reply_speaker = "姐姐" if is_sister_line else speaker
+                        reply_speaker = "姐姐" if is_sister_line else (role_name or speaker)
+                        target_display = (
+                            "另一位姐姐"
+                            if roles.is_sister(target_role)
+                            else (roles.display(target_role) or target_name)
+                        ) if target_role else target_name
                         payload = dict(
                             module=module,
                             token=token,
@@ -1850,7 +1862,7 @@ def main() -> int:
                             cooldown_key=cooldown_key,
                             args=args,
                             context=context,
-                            target=target_name,
+                            target=target_display,
                             sister=is_sister_line,
                             respect=respect,
                             images=[],
