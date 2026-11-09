@@ -209,6 +209,25 @@ def send_welcome(**kwargs) -> None:
         log(f"welcome failed group={group[:8]}: {exc}")
 
 
+def send_join_welcome(**kwargs) -> None:
+    group = kwargs["group"]
+    user = kwargs["user_id"]
+    try:
+        text = kwargs["welcome"].greet_join(group)
+        markdown, keyboard = kwargs["welcome"].join_card(user, text)
+        try:
+            kwargs["module"].send_group_markdown(
+                kwargs["token"], group, markdown, keyboard=keyboard
+            )
+        except Exception as exc:
+            log(f"welcome join markdown failed: {exc}")
+            kwargs["module"].send_group_message(kwargs["token"], group, text)
+        kwargs["welcome"].mark_join_welcome(group)
+        log(f"welcome join sent group={group[:8]} user={user[:8]} text={text!r}")
+    except Exception as exc:
+        log(f"welcome join failed group={group[:8]}: {exc}")
+
+
 def _download_images(urls, message_id: str, group: str) -> list[Path]:
     paths: list[Path] = []
     for index, url in enumerate((urls or [])[:2]):
@@ -1026,6 +1045,39 @@ def main() -> int:
                     log("gateway requested reconnect")
                     break
                 event = message.get("t")
+                if event == "GROUP_MEMBER_ADD":
+                    data = message.get("d", {})
+                    group_openid = str(data.get("group_openid") or "").strip()
+                    member_openid = str(data.get("member_openid") or "").strip()
+                    if not group_openid or not member_openid:
+                        continue
+                    register_group(module, token_state, group_openid)
+                    if (
+                        control_enabled("pause", False)
+                        or not control_enabled("welcome", True)
+                        or member_openid == sister_openid
+                    ):
+                        continue
+                    bot_id = bot_member_openid(module, token, group_openid)
+                    if member_openid == bot_id:
+                        continue
+                    if not welcome.is_new(group_openid, member_openid):
+                        continue
+                    if welcome.join_too_soon(group_openid):
+                        log(f"welcome join: too soon group={group_openid[:8]}")
+                        continue
+                    payload = dict(
+                        module=module,
+                        token=token,
+                        welcome=welcome,
+                        group=group_openid,
+                        user_id=member_openid,
+                    )
+                    submit_reply(
+                        group_openid, "welcome-join", functools.partial(send_join_welcome, **payload)
+                    )
+                    continue
+
                 if event == "GROUP_ADD_ROBOT":
                     data = message.get("d", {})
                     register_group(module, token_state, data.get("group_openid", ""))

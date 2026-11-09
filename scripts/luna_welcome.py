@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""新人欢迎：QQ 机器人接口拿不到「进群」事件，只能按「某人第一次开口」来认新人。"""
+"""新人欢迎：优先用 GROUP_MEMBER_ADD 事件立即欢迎；拿不到事件时按第一次开口兜底。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SEEN_PATH = ROOT / "logs" / "luna-members.json"
 CHAT_DIR = ROOT / "logs" / "chat"
 PROFILE_DIR = ROOT / "logs" / "profiles"
+SITE = "https://luna-site-d0gj36nib486137a4-1524033896.tcloudbaseapp.com"
+WELCOME_IMAGE = f"{SITE}/assets/img/hero-luna.webp"
+WELCOME_LINK = f"{SITE}/manual.html"
 GROUP_GAP = 120
+JOIN_GAP = 10
 MIN_MEMBERS = 5
 MAX_USERS = 800
 
@@ -26,6 +30,12 @@ FALLBACKS = [
     "……新面孔。既然进来了，就安分待着。",
     "又来一个人类。……算了，欢迎。",
     "新人？进来就别客气了，这里本来也没什么规矩。",
+]
+
+JOIN_FALLBACKS = [
+    "……新人。进来了就安分待着。",
+    "又来一个。……欢迎。",
+    "新面孔。别挡路，也别惹事。",
 ]
 
 
@@ -119,13 +129,30 @@ def mark_welcome(group: str) -> None:
     _save(data)
 
 
-def greet(name: str, group: str = "") -> str:
+def join_too_soon(group: str) -> bool:
+    last = float((_load().get(group) or {}).get("last_join_welcome") or 0)
+    return time.time() - last < JOIN_GAP
+
+
+def mark_join_welcome(group: str) -> None:
+    data = _load()
+    data.setdefault(group, {})["last_join_welcome"] = int(time.time())
+    _save(data)
+
+
+def _greet(name: str, group: str, join: bool = False) -> str:
     key = luna_chat.api_key()
+    fallbacks = JOIN_FALLBACKS if join else FALLBACKS
     if not key:
-        return random.choice(FALLBACKS)
-    who = f"「{name}」" if name else "一个没留名字的人"
+        return random.choice(fallbacks)
+    if join:
+        who = "刚进群、还不知道昵称的新人"
+        lead = "群里刚有人进群。"
+    else:
+        who = f"「{name}」" if name else "一个没留名字的人"
+        lead = "群里刚来了个新人，"
     prompt = (
-        f"群里刚来了个新人，昵称是{who}。用你的口吻对他说一句欢迎的话。"
+        f"{lead}昵称是{who}。用你的口吻对对方说一句欢迎的话。"
         "只要一句，不超过 25 字；冷淡、别扭，但别赶人走，不要说教，不要问问题，不用颜文字，不用引号。"
     )
     try:
@@ -149,8 +176,48 @@ def greet(name: str, group: str = "") -> str:
         text = str(payload["choices"][0]["message"]["content"] or "").strip()
         text = text.strip('"“”「」\n ')
         if not text or "[skip]" in text:
-            return random.choice(FALLBACKS)
+            return random.choice(fallbacks)
         return text[:60]
     except Exception as exc:
         log(f"greet failed group={group[:8]} {type(exc).__name__}")
-        return random.choice(FALLBACKS)
+        return random.choice(fallbacks)
+
+
+def greet(name: str, group: str = "") -> str:
+    return _greet(name, group, join=False)
+
+
+def greet_join(group: str) -> str:
+    return _greet("", group, join=True)
+
+
+def join_card(user_id: str, text: str) -> tuple[str, dict]:
+    """入群欢迎卡片：@新人 + 露娜图 + 使用说明按钮。"""
+    mention = f'<qqbot-at-user id="{user_id}" /> ' if user_id else ""
+    line = " ".join(str(text or "").split()) or random.choice(JOIN_FALLBACKS)
+    markdown = f"{mention}{line}\n\n![露娜]({WELCOME_IMAGE})"
+    keyboard = {
+        "content": {
+            "rows": [
+                {
+                    "buttons": [
+                        {
+                            "id": "welcome_help",
+                            "render_data": {
+                                "label": "使用说明",
+                                "visited_label": "使用说明",
+                                "style": 1,
+                            },
+                            "action": {
+                                "type": 0,
+                                "permission": {"type": 2},
+                                "data": WELCOME_LINK,
+                                "unsupport_tips": "请升级 QQ",
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    return markdown, keyboard
