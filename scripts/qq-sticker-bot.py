@@ -471,6 +471,19 @@ def log(message: str) -> None:
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
 
+STICKER_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+
+def sticker_files() -> list[Path]:
+    if not STICKER_DIR.exists():
+        return []
+    return [
+        path
+        for path in STICKER_DIR.rglob("*")
+        if path.is_file() and path.suffix.lower() in STICKER_EXTS
+    ]
+
+
 _control_state: dict[str, bool] = {}
 
 
@@ -997,6 +1010,8 @@ def main() -> int:
     last_unknown = {}
     last_weather = {}
     last_weather_hint = {}
+    last_sticker = {}
+    last_sticker_pick = {}
     last_luna = {}
     task_hits = {}
     violence_hits = {}
@@ -1438,6 +1453,35 @@ def main() -> int:
                             )
                         except Exception as send_exc:
                             log(f"weather error send failed: {send_exc}")
+                    continue
+
+                if cmd in ("随机表情包", "表情包", "随机表情"):
+                    now = time.time()
+                    if now - last_sticker.get(cooldown_key, 0.0) < 10:
+                        log(f"sticker: cooldown key={cooldown_key}")
+                        continue
+                    last_sticker[cooldown_key] = now
+                    files = sticker_files()
+                    if not files:
+                        try:
+                            module.send_group_message(
+                                token, group_openid, "表情包文件夹是空的。", msg_id=message_id
+                            )
+                        except Exception as exc:
+                            log(f"sticker empty hint failed: {exc}")
+                        continue
+                    pick = random.choice(files)
+                    last_pick = last_sticker_pick.get(group_openid)
+                    if len(files) > 1 and pick == last_pick:
+                        pick = random.choice([path for path in files if path != last_pick])
+                    try:
+                        module.send_group_image(
+                            token, group_openid, pick, pick.name, msg_id=message_id, msg_seq=1
+                        )
+                        last_sticker_pick[group_openid] = pick
+                        log(f"sticker: sent {pick.name} key={cooldown_key}")
+                    except Exception as exc:
+                        log(f"sticker send failed: {exc}")
                     continue
 
                 if cmd in ("帮助", "help", "菜单", "使用说明"):
