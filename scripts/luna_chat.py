@@ -182,7 +182,10 @@ CAPABILITY_PATTERN = re.compile(
 LORE_PATTERN = re.compile(
     r'(启动日|生日|身高|体重|年龄|循环液|武器|喜好|资料|档案|介绍|是谁|什么人|世界观|设定|'
     r'帕弥什|升格|升格网络|空中花园|构造体|感染体|红潮|代行者|授格者|灰鸦|'
-    r'露西亚|阿尔法|罗兰|拉弥亚|加百列|冯.?内古特|九龙|极地|凛冬|银冕|终焉)'
+    r'露西亚|阿尔法|罗兰|拉弥亚|加百列|冯.?内古特|九龙|极地|凛冬|银冕|终焉|'
+    r'战双|库洛|意识海|逆元|异聚核心|清理部队|工程部队|突击鹰|三头犬|生命之星|阿迪莱|'
+    r'黄金之涡|黑星|永夜|湮灭|摇篮|剪身|遥行|刻命|络勾陈|赛琳娜|比安卡|薇拉|库洛姆|'
+    r'神威|渡边|七实|苏菲亚|常羽|蒲牢|艾拉|万事|卡列尼娜|丽芙)'
 )
 LORE_NOTE = (
     '\n\n【资料库】下面是“升格网络”里关于你自己、姐姐、同伴和这个世界的记录。'
@@ -202,6 +205,16 @@ def load_lore() -> str:
 
 
 WIKI_API = 'https://wiki.biligame.com/zspms/api.php'
+KURO_SEARCH = 'https://api.kurobbs.com/wiki/core/catalogue/item/search'
+KURO_DETAIL = 'https://api.kurobbs.com/wiki/core/catalogue/item/getEntryDetail'
+KURO_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120',
+    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    'Origin': 'https://wiki.kurobbs.com',
+    'Referer': 'https://wiki.kurobbs.com/',
+    'wiki_type': '2',
+    'source': 'h5',
+}
 _lore_cache: dict[str, tuple[float, str]] = {}
 LORE_CACHE_TTL = 1800
 _wiki = requests.Session()
@@ -335,6 +348,106 @@ def web_lore(text: str) -> str:
                 break
         if snippet:
             break
+
+    _lore_cache[key] = (time.time(), snippet)
+    if len(_lore_cache) > 200:
+        for k in list(_lore_cache)[:100]:
+            _lore_cache.pop(k, None)
+    return snippet
+
+
+def _kuro_clean(raw: str) -> str:
+    text = re.sub(r'<[^>]+>', ' ', raw or '')
+    text = html.unescape(text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _kuro_extract(data: dict) -> str:
+    content = data.get('content') or {}
+    texts: list[str] = []
+    for module in content.get('modules') or []:
+        for component in module.get('components') or []:
+            value = component.get('content')
+            if isinstance(value, str) and value.strip():
+                texts.append(_kuro_clean(value))
+    story = content.get('story') or {}
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == 'content' and isinstance(value, str) and value.strip():
+                    texts.append(_kuro_clean(value))
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(story)
+    return ' '.join(text for text in texts if text)
+
+
+def kuro_lore(text: str) -> str:
+    """库街区 WIKI：优先查档案馆/世界观，其次剧情回顾，失败返回空串。"""
+    query = re.sub(
+        r'(发生了什么|是什么|是谁|怎么样|介绍一下|告诉我|请|问一下|你知道|为什么|怎么|哪些|什么|战双|的)',
+        ' ',
+        text or '',
+    )
+    query = re.sub(r'[，。？?!！、,.~～\s]+', ' ', query).strip()[:30] or (text or '')[:30]
+    key = re.sub(r'\s+', '', query)[:30]
+    cached = _lore_cache.get(key)
+    if cached and time.time() - cached[0] < LORE_CACHE_TTL:
+        return cached[1]
+
+    snippet = ''
+    try:
+        response = _wiki.post(
+            KURO_SEARCH,
+            headers=KURO_HEADERS,
+            data={'keyword': query, 'page': 1, 'limit': 8},
+            timeout=10,
+        )
+        payload = response.json() or {}
+        records = ((payload.get('data') or {}).get('results') or {}).get('records') or []
+        candidates = []
+        for record in records[:8]:
+            entry_id = record.get('entryId') or (record.get('linkConfig') or {}).get('entryId')
+            if not entry_id:
+                continue
+            detail_response = _wiki.post(
+                KURO_DETAIL,
+                headers=KURO_HEADERS,
+                data={'id': entry_id},
+                timeout=10,
+            )
+            detail = (detail_response.json() or {}).get('data') or {}
+            org = str(detail.get('orgFullName') or '')
+            if '表情包' in org:
+                continue
+            if '设定集' in org or '图鉴' in org:
+                continue
+            body = _kuro_extract(detail)
+            if len(body) < 80:
+                continue
+            score = 0
+            if '档案馆' in org:
+                score += 5
+            if '世界观' in org:
+                score += 3
+            if '剧情回顾' in org:
+                score += 1
+            if score <= 0:
+                continue
+            candidates.append((score, len(body), str(detail.get('name') or record.get('name') or ''), org, body))
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        parts = []
+        for _, _, name, org, body in candidates[:2]:
+            label = f'{name}（{org}）' if org else name
+            parts.append(f'{label}：{body[:500]}')
+        snippet = '\n'.join(parts)[:1200]
+    except Exception as exc:
+        log(f'kuro lore failed: {type(exc).__name__}: {exc}')
 
     _lore_cache[key] = (time.time(), snippet)
     if len(_lore_cache) > 200:
@@ -600,7 +713,12 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     if not tool_result and not target_ask and original and is_lore(original):
         long_answer = True
         extra_blocks.append((LORE_NOTE + load_lore()).strip())
-        fetched = web_lore(original) or web_search(original)
+        fetched = kuro_lore(original)
+        if fetched:
+            log(f'kuro lore hit key={group_openid} chars={len(fetched)}')
+        else:
+            log(f'kuro lore miss key={group_openid}')
+            fetched = web_lore(original) or web_search(original)
         if fetched:
             extra_blocks.append(
                 "【实时检索到的资料】（可能不完整，和上面的记录冲突时以记录为准）\n" + fetched
