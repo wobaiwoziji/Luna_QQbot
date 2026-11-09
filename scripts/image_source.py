@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """Resolve an IP/character name to booru tags and download the images.
 
-Used by qq-sticker-bot.py. Sources are tried in order: yande.re -> safebooru.org
--> wallhaven.cc (wallhaven needs a proxy/VPN, so it is only a last resort).
+Used by qq-sticker-bot.py. Sources are tried in order: pixiv.net -> safebooru.org
+-> yande.re -> wallhaven.cc (wallhaven needs a proxy/VPN, so it is only a last resort).
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from PIL import Image
@@ -38,6 +39,8 @@ USER_AGENT = (
 YANDE_TIMEOUT = 8
 SAFEBOORU_TIMEOUT = 20
 WALLHAVEN_TIMEOUT = 6
+PIXIV_TIMEOUT = 15
+PIXIV_REFERER = "https://www.pixiv.net/"
 SEARCH_CACHE_TTL = 600
 SEARCH_CACHE_LIMIT = 80
 DOWNLOAD_TIMEOUT = 45
@@ -60,10 +63,7 @@ def log(message: str) -> None:
 
 
 def load_tag_map() -> dict:
-    try:
-        data = json.loads(TAG_MAP_PATH.read_text(encoding="utf-8-sig"))
-    except Exception:
-        data = {}
+    data = json.loads(TAG_MAP_PATH.read_text(encoding="utf-8-sig"))
     for key in ("ips", "chars", "combos"):
         table = data.get(key) or {}
         data[key] = {str(name).strip().lower(): str(tag).strip() for name, tag in table.items()}
@@ -130,7 +130,7 @@ def http_get(url: str, params: dict | None = None, timeout: int = 20, referer: s
     return requests.get(url, params=params, headers=headers, timeout=timeout)
 
 
-def to_candidate(source: str, item_id, url: str | None, preview: str | None, score=0, prefer_preview: bool = False, tags: str = "", width=0, height=0) -> dict:
+def to_candidate(source: str, item_id, url: str | None, preview: str | None, score=0, prefer_preview: bool = False, tags: str = "", width=0, height=0, referer: str | None = None) -> dict:
     return {
         "source": source,
         "id": str(item_id),
@@ -141,6 +141,7 @@ def to_candidate(source: str, item_id, url: str | None, preview: str | None, sco
         "tags": str(tags or ""),
         "width": int(width or 0),
         "height": int(height or 0),
+        "referer": str(referer or ""),
     }
 
 
@@ -205,7 +206,61 @@ def search_wallhaven(tags: str, limit: int = 24) -> list[dict]:
     ]
 
 
+def search_pixiv(tags: str, limit: int = 40) -> list[dict]:
+    keyword = (tags or "").strip()
+    if not keyword:
+        return []
+    response = http_get(
+        f"https://www.pixiv.net/ajax/search/artworks/{quote(keyword)}",
+        {
+            "word": keyword,
+            "order": "popular_d",
+            "mode": "safe",
+            "p": 1,
+            "s_mode": "s_tag_full",
+            "type": "all",
+            "lang": "zh",
+        },
+        timeout=(8, PIXIV_TIMEOUT),
+        referer=PIXIV_REFERER,
+    )
+    response.raise_for_status()
+    payload = response.json() or {}
+    if payload.get("error"):
+        raise RuntimeError(str(payload.get("message") or "pixiv search failed"))
+    body = payload.get("body") or {}
+    items = (
+        (body.get("illustManga") or {}).get("data")
+        or (body.get("illust") or {}).get("data")
+        or []
+    )
+    candidates = []
+    for item in items[:limit]:
+        if int(item.get("xRestrict") or 0) != 0:
+            continue
+        raw_url = str(item.get("url") or "").strip()
+        if not raw_url:
+            continue
+        master = re.sub(r"/c/[^/]+/", "/", raw_url).replace("_square1200", "_master1200")
+        candidates.append(
+            to_candidate(
+                "pixiv",
+                item.get("id"),
+                master,
+                raw_url,
+                item.get("bookmarkCount") or 0,
+                prefer_preview=False,
+                tags=" ".join(str(tag) for tag in (item.get("tags") or [])),
+                width=item.get("width") or 0,
+                height=item.get("height") or 0,
+                referer=PIXIV_REFERER,
+            )
+        )
+    return candidates
+
+
 SOURCES = (
+    ("pixiv", search_pixiv),
     ("safebooru", search_safebooru),
     ("yande", search_yande),
     ("wallhaven", search_wallhaven),
@@ -213,7 +268,7 @@ SOURCES = (
 
 _TAG_INFO: dict[str, tuple[int, int] | None] = {}
 
-SOURCE_INTERVAL = {"safebooru": 1.5, "yande": 1.0, "wallhaven": 1.0}
+SOURCE_INTERVAL = {"pixiv": 1.5, "safebooru": 1.5, "yande": 1.0, "wallhaven": 1.0}
 _LAST_CALL: dict[str, float] = {}
 
 
@@ -500,7 +555,10 @@ def download_image(candidate: dict, deadline: float) -> Path:
             break
         try:
             started = time.time()
-            with requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=(8, 15), stream=True) as response:
+            headers = {"User-Agent": USER_AGENT}
+            if candidate.get("referer"):
+                headers["Referer"] = str(candidate["referer"])
+            with requests.get(url, headers=headers, timeout=(8, 15), stream=True) as response:
                 response.raise_for_status()
                 buffer = bytearray()
                 for chunk in response.iter_content(65536):
@@ -514,6 +572,8 @@ def download_image(candidate: dict, deadline: float) -> Path:
 
 
 def tags_match(candidate: dict, char_tags: list[str]) -> bool:
+    if candidate.get("source") == "pixiv":
+        return True
     if not char_tags:
         return True
     post_tags = (candidate.get("tags") or "").split()
