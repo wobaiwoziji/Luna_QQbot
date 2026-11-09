@@ -88,8 +88,10 @@ def weather_keyboard() -> dict:
     }
 
 HINT_TEXT = (
-    "没找到「{name}」的图。可以试 IP_角色名，比如 原神_雷电将军、东方_灵梦，"
-    "也可以直接给英文 tag，比如 raiden_shogun。"
+    "没找到「{name}」的图。角色重名时，用「角色 作品」或「作品 角色」，中间加空格：\n"
+    "· 拉弥亚 战双 / 战双 拉弥亚\n"
+    "· 缘结神 阴阳师 / 阴阳师 缘结神\n"
+    "也可以直接给英文或日文 tag，比如 lamia_(punishing:_gray_raven)、ラミア。"
 )
 
 HELP_TEXT = (

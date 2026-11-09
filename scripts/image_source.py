@@ -111,6 +111,12 @@ def resolve_tags(raw: str, tag_map: dict) -> str:
     if lowered in tag_map["combos"]:
         return tag_map["combos"][lowered]
 
+    parts = [item for item in re.split(r"[\s_/]+", name) if item.strip()]
+    if len(parts) > 1:
+        resolved = [lookup_part(item, tag_map, passthrough=False) for item in parts]
+        if all(resolved):
+            return " ".join(dict.fromkeys(resolved))
+
     parts = [item for item in re.split(r"[_/]+", name) if item.strip()]
     if len(parts) > 1:
         resolved = [lookup_part(item, tag_map, passthrough=False) for item in parts]
