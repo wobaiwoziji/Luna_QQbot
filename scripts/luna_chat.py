@@ -14,6 +14,7 @@ from pathlib import Path
 import requests
 
 import memory
+import luna_kb
 import token_usage
 
 HERE = Path(__file__).resolve().parent
@@ -185,7 +186,10 @@ LORE_PATTERN = re.compile(
     r'露西亚|阿尔法|罗兰|拉弥亚|加百列|冯.?内古特|九龙|极地|凛冬|银冕|终焉|'
     r'战双|库洛|意识海|逆元|异聚核心|清理部队|工程部队|突击鹰|三头犬|生命之星|阿迪莱|'
     r'黄金之涡|黑星|永夜|湮灭|摇篮|剪身|遥行|刻命|络勾陈|赛琳娜|比安卡|薇拉|库洛姆|'
-    r'神威|渡边|七实|苏菲亚|常羽|蒲牢|艾拉|万事|卡列尼娜|丽芙)'
+    r'神威|渡边|七实|苏菲亚|常羽|蒲牢|艾拉|万事|卡列尼娜|丽芙|'
+    r'纯净区|异灾区|异聚塔|零点能|格式塔|门扉|多米尼克|伊什梅尔|塞勒涅|柯蕾多尔|华胥|'
+    r'夜航船|亚特兰蒂斯|康斯塔雷耶|大撤退|免疫时代|黄金时代|大筛选|重筛|授格|升格者|'
+    r'过去|童年|小时候|身世|来历)'
 )
 LORE_NOTE = (
     '\n\n【资料库】下面是“升格网络”里关于你自己、姐姐、同伴和这个世界的记录。'
@@ -717,19 +721,28 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     if not tool_result and not target_ask and original and is_lore(original):
         long_answer = True
         extra_blocks.append((LORE_NOTE + load_lore()).strip())
-        fetched = kuro_lore(original)
-        if fetched:
-            log(f'kuro lore hit key={group_openid} chars={len(fetched)}')
-        else:
-            log(f'kuro lore miss key={group_openid}')
-            fetched = web_lore(original) or web_search(original)
-        if fetched:
+        kb = luna_kb.lookup(original)
+        if kb:
             extra_blocks.append(
-                "【实时检索到的资料】（可能不完整，和上面的记录冲突时以记录为准）\n" + fetched
+                "【知识库】（升格网络里关于这个世界的记录，比你凭印象记得的更完整；"
+                "据此回答，用自己的口气说 1-3 句，不要整段念，也不要提知识库、资料库或章节编号）\n" + kb
             )
-            log(f"lore web hit key={group_openid} chars={len(fetched)}")
+            log(f"kb lore hit key={group_openid} chars={len(kb)}")
         else:
-            log(f"lore web miss key={group_openid}")
+            log(f"kb lore miss key={group_openid}")
+            fetched = kuro_lore(original)
+            if fetched:
+                log(f'kuro lore hit key={group_openid} chars={len(fetched)}')
+            else:
+                log(f'kuro lore miss key={group_openid}')
+                fetched = web_lore(original) or web_search(original)
+            if fetched:
+                extra_blocks.append(
+                    "【实时检索到的资料】（可能不完整，和上面的记录冲突时以记录为准）\n" + fetched
+                )
+                log(f"lore web hit key={group_openid} chars={len(fetched)}")
+            else:
+                log(f"lore web miss key={group_openid}")
     elif not identity_ask and not target_ask and original and (SEARCH_PATTERN.search(original) or (
         re.search(r'(更多|详细|继续|还有|补充)', original) and _last_query.get(group_openid)
     )):
