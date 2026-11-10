@@ -588,6 +588,29 @@ def tags_match(candidate: dict, char_tags: list[str]) -> bool:
     return all(tag in post_tags for tag in char_tags)
 
 
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text or ""))
+
+
+def choose_picks(pools: list[list[dict]], count: int) -> list[dict]:
+    for pool in pools:
+        pool.sort(key=lambda item: item.get("score", 0), reverse=True)
+    picks: list[dict] = []
+    if pools:
+        pool = pools[0]
+        big = [item for item in pool if max(item.get("width", 0), item.get("height", 0)) >= 1000]
+        if len(big) >= count:
+            pool = big
+        ranked = sorted(pool, key=lambda item: (item.get("score", 0), item.get("width", 0)), reverse=True)[:20]
+        picks = random.sample(ranked, min(count, len(ranked)))
+    flat = [item for pool in pools for item in pool]
+    if len(picks) < count:
+        spare = [item for item in flat if item not in picks]
+        random.shuffle(spare)
+        picks = picks + spare[: count - len(picks)]
+    return picks
+
+
 def collect_candidates(
     tags: str,
     tag_key: str,
@@ -644,48 +667,50 @@ def fetch_images(raw: str, count: int = 1, mark: bool = True, tags_override: str
         try:
             tags = resolve_tags(raw, tag_map)
         except ImageNotFound:
-            tags = learn_resolve(raw)
+            try:
+                tags = learn_resolve(raw)
+            except ImageNotFound:
+                if not _has_cjk(raw):
+                    raise
+                tags = raw.strip()
         if re.fullmatch(r"[ -~]+", (raw or "").strip()):
             validate_tags(tags)
     tag_key = tags.replace(" ", "+")
     state = load_state()
     cache = load_cache()
-    seen = seen_ids(state, tag_key)
     errors: list[str] = []
     deadline = time.time() + FETCH_BUDGET
 
-    char_tags = []
-    for part in tags.split():
-        info = tag_info(part)
-        if info and info[0] == 4:
-            char_tags.append(part)
+    queries = [tags]
+    raw_name = (raw or "").strip()
+    if raw_name and raw_name != tags and _has_cjk(raw_name) and not re.search(r"\s", raw_name):
+        queries.insert(0, raw_name)
 
-    pools = collect_candidates(tags, tag_key, cache, seen, errors, deadline, count, char_tags)
-    flat = [item for pool in pools for item in pool]
-    picks = []
-    for pool in pools:
-        pool.sort(key=lambda item: item.get("score", 0), reverse=True)
-    if pools:
-        pool = pools[0]
-        big = [item for item in pool if max(item.get("width", 0), item.get("height", 0)) >= 1000]
-        if len(big) >= count:
-            pool = big
-        ranked = sorted(pool, key=lambda item: (item.get("score", 0), item.get("width", 0)), reverse=True)[:20]
-        picks = random.sample(ranked, min(count, len(ranked)))
-    if len(picks) < count:
-        spare = [item for item in flat if item not in picks]
-        random.shuffle(spare)
-        picks = picks + spare[: count - len(picks)]
+    def search_tags(query: str) -> tuple[list[dict], list[dict], str]:
+        key = query.replace(" ", "+")
+        query_seen = seen_ids(state, key)
+        chars = [part for part in query.split() if (tag_info(part) or (0, 0))[0] == 4]
+        pools = collect_candidates(query, key, cache, query_seen, errors, deadline, count, chars)
+        chosen = choose_picks(pools, count)
+        if not chosen and query_seen:
+            log(f"{query} 已看完全部缓存，重置去重记录")
+            state.setdefault("seen", {})[key] = []
+            pools = collect_candidates(query, key, cache, set(), errors, deadline, count, chars)
+            chosen = choose_picks(pools, count)
+        return chosen, [item for pool in pools for item in pool], key
+
+    picks: list[dict] = []
+    flat: list[dict] = []
+    for query in queries:
+        picks, flat, tag_key = search_tags(query)
+        if picks:
+            if query != tags:
+                log(f"image raw query={query!r}")
+                tags = query
+            break
     if not picks:
-        if seen:
-            log(f"{tags} 已看完全部缓存，重置去重记录")
-            state.setdefault("seen", {})[tag_key] = []
-            pools = collect_candidates(tags, tag_key, cache, set(), errors, deadline, count, char_tags)
-            flat = [item for pool in pools for item in pool]
-            picks = random.sample(flat, min(count, len(flat)))
-        if not picks:
-            detail = "; ".join(errors[:2])
-            raise ImageNotFound(f"{raw}（tags={tags}）{detail}")
+        detail = "; ".join(errors[:2])
+        raise ImageNotFound(f"{raw}（tags={tags}）{detail}")
 
     queue = list(picks) + [item for item in flat if item not in picks][:8]
     paths = []
