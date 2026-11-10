@@ -71,7 +71,7 @@ def build() -> tuple[str, dict]:
                 },
                 {
                     "buttons": [
-                        _button("b7", "Qtan 工具", f"{BASE}/qtan.html"),
+                        _button("b7", "露娜的B站", "https://space.bilibili.com/1041931293"),
                         _button("b8", "官网首页", f"{BASE}/index.html"),
                     ]
                 },
