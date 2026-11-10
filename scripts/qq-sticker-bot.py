@@ -1284,7 +1284,7 @@ def main() -> int:
                             message_id,
                             penalties,
                             random.choice(luna.SEXUAL_VIOLENCE_LINES),
-                            minutes=10,
+                            minutes=60,
                         )
                         continue
                     now = time.time()
@@ -1830,7 +1830,7 @@ def main() -> int:
                             message_id,
                             penalties,
                             random.choice(luna.SEXUAL_VIOLENCE_LINES),
-                            minutes=10,
+                            minutes=60,
                         )
                         continue
                     if target_id and not is_sister_line and luna.is_offensive(args):
