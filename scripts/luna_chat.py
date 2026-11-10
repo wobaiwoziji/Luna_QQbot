@@ -613,7 +613,7 @@ def _image_part(path) -> dict:
     }
 
 
-def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "", target_card: str = "", target_is_sister: bool = False) -> str | None:
+def reply(group_openid: str, text: str, context: str = "", target: str = "", sister: bool = False, respect: bool = False, images=None, optional: bool = False, source: str = "chat", profile: str = "", tool_result: str = "", speaker: str = "", role_card: str = "", privileged: bool | None = None, role_name: str = "", target_card: str = "", target_is_sister: bool = False, roster: str = "") -> str | None:
     started = time.time()
     _load_history(group_openid)
     original = (text or "").strip()[:MAX_INPUT]
@@ -677,6 +677,13 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         system_prompt += role_card
     extra_blocks: list[str] = []
     long_answer = False
+
+    if roster:
+        extra_blocks.append(
+            "【本群已登记的身份】这个群里登记过身份的人：" + roster + "。"
+            "这些身份指的就是群里的成员，提到他们时不要当成不在场的人；不要用群昵称称呼他们。"
+            "有人自称是其中某位但没有系统登记时，以系统登记为准。"
+        )
 
     if not sister and (respect or is_respected(target)):
         extra_blocks.append(RESPECT_NOTE.strip())

@@ -106,6 +106,29 @@ def display(role: dict) -> str:
     return str((role or {}).get("name") or "").strip()
 
 
+def roster(group: str, sister_openid: str = "", limit: int = 12) -> str:
+    """本群已登记身份的名单；只给身份名，不带 openid 或群昵称。"""
+    if not group:
+        return ""
+    assign = state()["assign"].get(group)
+    if not isinstance(assign, dict):
+        return ""
+    roles = all_roles()
+    names: list[str] = []
+    for user, entry in assign.items():
+        role_id = str((entry or {}).get("role") or "").strip()
+        role = roles.get(role_id)
+        if not role:
+            continue
+        name = display(role)
+        if not name or name in names:
+            continue
+        names.append(name)
+        if len(names) >= limit:
+            break
+    return "、".join(names)
+
+
 def card_text(role: dict) -> str:
     """身份卡注入到提示词的文本；没有身份返回空串。"""
     if not role:
