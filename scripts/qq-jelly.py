@@ -24,6 +24,7 @@ if _BASE_SITE.exists() and str(_BASE_SITE) not in sys.path:
 PRESET = dict(bounce=50, squash=260, speed=3.0, sway=0, jelly=0)
 SIZE = 480
 FPS = 25
+BEAT_PATTERN = re.compile(r"版本\s*(?:二|2|ii)|v\s*2", re.I)
 
 TRIGGER = re.compile(r"[qQ]\s*弹")
 IMAGE_SUFFIX = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif")
@@ -93,17 +94,23 @@ def _download(url: str, dest: Path) -> Path:
     return dest
 
 
-def render(source: Path) -> Path:
+def wants_beat(text: str) -> bool:
+    return bool(BEAT_PATTERN.search(text or ""))
+
+
+def render(source: Path, model: str = "classic") -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     output = OUT_DIR / f"qtan-{int(time.time() * 1000)}.gif"
-    _jelly().export(source, output, size=SIZE, fps=FPS, bg="transparent", colors=256, **PRESET)
+    _jelly().export(
+        source, output, size=SIZE, fps=FPS, bg="transparent", colors=256, model=model, **PRESET
+    )
     return output
 
 
-def generate(url: str) -> Path:
+def generate(url: str, model: str = "classic") -> Path:
     stamp = f"{int(time.time() * 1000)}"
     source = _download(url, OUT_DIR / f"src-{stamp}.img")
-    return render(source)
+    return render(source, model=model)
 
 
 def prune(keep: int = 60) -> None:

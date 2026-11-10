@@ -1668,6 +1668,7 @@ def main() -> int:
                                     token,
                                     group_openid,
                                     "Q弹需要一张图：@我 + 图片 +「Q弹」。"
+                                    "想用音乐拍点就写「Q弹 版本二」。"
                                     "官方接口读不到群成员头像，拿不到别人的头像。",
                                     msg_id=message_id,
                                 )
@@ -1676,12 +1677,13 @@ def main() -> int:
                         continue
                     inflight.add(cooldown_key)
                     try:
-                        path = jelly.generate(urls[0])
+                        model = "beat" if jelly.wants_beat(args) else "classic"
+                        path = jelly.generate(urls[0], model=model)
                         result = module.send_group_image(
                             token, group_openid, path, path.name, msg_id=message_id
                         )
                         last_jelly[cooldown_key] = time.time()
-                        log(f"jelly sent {path.name} id={result.get('id')}")
+                        log(f"jelly sent {path.name} model={model} id={result.get('id')}")
                     except Exception as exc:
                         log(f"jelly failed: {exc}")
                         try:
