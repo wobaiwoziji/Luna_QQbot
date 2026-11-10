@@ -1902,6 +1902,7 @@ def main() -> int:
                                 message_id,
                                 penalties,
                                 "同样的话说三遍。你们人类真闲。",
+                                minutes=10,
                             )
                             continue
 
