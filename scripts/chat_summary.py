@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from datetime import datetime
@@ -39,6 +38,38 @@ ACCENT = (255, 107, 107)
 
 STOPWORDS = {"什么", "怎么", "这个", "那个", "就是", "可以", "没有", "不是", "我们", "你们", "他们", "一个", "现在", "还是", "但是", "因为", "所以", "感觉", "真的", "哈哈"}
 
+CARD_PATTERN = re.compile(r"^\[(卡片|Markdown|图文|分享|视频|语音|文件|图片|表情|链接)")
+
+
+def usable(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    if CARD_PATTERN.search(value):
+        return False
+    if "desc:" in value or "摘要:" in value:
+        return False
+    return True
+
+
+def parse_json(content: str) -> dict | None:
+    raw = (content or "").strip()
+    for candidate in (raw, raw[raw.find("{"): raw.rfind("}") + 1] if "{" in raw else ""):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            fixed = candidate.replace("\r", " ").replace("\n", " ")
+            try:
+                data = json.loads(fixed)
+                return data if isinstance(data, dict) else None
+            except Exception:
+                continue
+    return None
+
+
 
 def log(message: str) -> None:
     print(f"[summary] {message}", flush=True)
@@ -52,9 +83,13 @@ def api_key() -> str:
             return key
     except Exception:
         pass
-    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    if key:
-        return key
+    try:
+        auth = json.loads((Path.home() / ".local" / "share" / "opencode" / "auth.json").read_text(encoding="utf-8"))
+        entry = auth.get("deepseek") or {}
+        if str(entry.get("type", "")) == "api":
+            return str(entry.get("key") or "").strip()
+    except Exception:
+        pass
     return ""
 
 
@@ -62,45 +97,58 @@ def llm_summary(entries: list[dict], mapping: dict[str, str]) -> dict | None:
     key = api_key()
     if not key:
         return None
-    convo = "\n".join(
-        f"{mapping.get(item.get('user', ''), '某人')}: {str(item.get('text', ''))[:200]}"
-        for item in entries[-300:]
-    )
+    lines = []
+    for item in entries[-300:]:
+        text = str(item.get("text", "")).strip()
+        if not usable(text):
+            continue
+        lines.append(f"{mapping.get(item.get('user', ''), '某人')}: {text[:160]}")
+    if len(lines) < 5:
+        return None
+    convo = "\n".join(lines)
     prompt = (
-        "下面是今天一个QQ群的聊天记录，请用简单口语化的中文总结。\n"
-        '只输出 JSON，格式：{"headline": "一句话概括今天聊了什么", "points": ["3到6条要点"], "quote": "一句最有意思的原话"}。\n'
-        "要求：不要编造没出现的内容；每条要点 15-40 字；不要用 markdown；不要提到 openid；昵称用记录里的 用户A/用户B。\n\n"
+        "下面是今天一个QQ群的聊天记录。请像群友转述一样，按话题总结今天聊了什么，不要写成数据统计。\n"
+        '只输出 JSON：{"headline": "一句话说清今天主要在聊什么，20 字以内", '
+        '"points": ["3 到 6 条，每条 15-45 字，写清谁在聊什么、结论或分歧、有意思的点"], '
+        '"quote": "一句最有意思的原话，30 字以内"}。\n'
+        "要求：按话题归类，不要只报消息条数、活跃人数、高频词；不要编造没出现的内容；不要用 markdown；昵称用记录里的 用户A/用户B。\n\n"
         f"聊天记录：\n{convo}"
     )
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": "你是群聊总结助手，只输出 JSON。"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.6,
-        "max_tokens": 800,
-        "response_format": {"type": "json_object"},
-    }
-    try:
-        response = requests.post(
-            API_URL,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=45,
-        )
-        response.raise_for_status()
-        data = response.json()
-        token_usage.from_response("summary", "deepseek-chat", data)
-        content = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-        headline = str(parsed.get("headline") or "").strip()
-        points = [str(item).strip() for item in parsed.get("points") or [] if str(item).strip()]
-        quote = str(parsed.get("quote") or "").strip()
-        if headline and points:
-            return {"headline": headline, "points": points[:6], "quote": quote}
-    except Exception as exc:
-        log(f"LLM 总结失败，改用本地规则: {exc}")
+    for attempt in range(2):
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "你是群聊总结助手，只输出 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.4 if attempt == 0 else 0.2,
+            "max_tokens": 1200,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            response = requests.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=45,
+            )
+            response.raise_for_status()
+            data = response.json()
+            token_usage.from_response("summary", "deepseek-chat", data)
+            content = data["choices"][0]["message"]["content"]
+            parsed = parse_json(content)
+            if not parsed:
+                log(f"LLM 总结 JSON 解析失败（第 {attempt + 1} 次）")
+                continue
+            headline = str(parsed.get("headline") or "").strip()
+            points = [str(item).strip() for item in parsed.get("points") or [] if str(item).strip()]
+            quote = re.sub(r"\s+", " ", str(parsed.get("quote") or "")).strip().strip("「」\"'")
+            if len(quote) > 40:
+                quote = quote[:40]
+            if headline and points:
+                return {"headline": headline, "points": points[:6], "quote": quote}
+        except Exception as exc:
+            log(f"LLM 总结失败（第 {attempt + 1} 次）: {exc}")
     return None
 
 
@@ -114,18 +162,23 @@ def local_summary(entries: list[dict], mapping: dict[str, str], stat: dict) -> d
                 continue
             counter[token] = counter.get(token, 0) + 1
     hot = "、".join(word for word, count in sorted(counter.items(), key=lambda item: item[1], reverse=True)[:5] if count > 1)
-    longest = max((str(item.get("text", "")) for item in entries), key=len, default="")
+    samples = [
+        str(item.get("text", "")).strip()
+        for item in entries
+        if usable(item.get("text", "")) and 8 <= len(str(item.get("text", "")).strip()) <= 60
+    ]
+    sample = samples[-1] if samples else ""
     points = [f"今天共有 {stat['messages']} 条消息，{stat['users']} 人参与。"]
     if active:
         points.append(f"最活跃：{active}。")
     if hot:
         points.append(f"高频词：{hot}。")
-    if longest:
-        points.append(f"最长的一条有 {len(longest)} 个字。")
+    if sample:
+        points.append(f"有人提到：{sample[:40]}。")
     return {
         "headline": f"今天群里聊了 {stat['messages']} 条消息",
         "points": points,
-        "quote": longest[:40],
+        "quote": sample[:40],
     }
 
 
@@ -216,7 +269,7 @@ def build(group_openid: str, day: str | None = None) -> Path:
             draw.text((PAD + 26, y), line, font=quote_font, fill=MUTED)
             y += quote_font.size + 10
 
-    draw.text((PAD, height - PAD - 26), "由露娜自动生成", font=footer_font, fill=MUTED)
+    draw.text((PAD, height - PAD - 26), "由 升格网络 自动生成", font=footer_font, fill=MUTED)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     target = OUT_DIR / f"summary-{group_openid[:8]}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
