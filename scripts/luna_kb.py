@@ -1,29 +1,108 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""露娜知识库：按问题挑出最相关的几节 Markdown 记录。"""
+"""露娜知识库：优先用「调用版」问答条目，命中不了再退回 Markdown 分节检索。"""
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from pathlib import Path
 
-KB_PATH = Path(__file__).resolve().parent / "luna-kb.md"
-MAX_CHARS = 3000
-MAX_SECTIONS = 4
-MAX_SECTION_CHARS = 1500
-MIN_SCORE = 0.8
-LONG_SECTION_PENALTY = 0.6
+HERE = Path(__file__).resolve().parent
+JSON_PATH = HERE / "luna-kb.json"
+MD_PATH = HERE / "luna-kb.md"
 
-_cache: dict = {"mtime": 0.0, "sections": [], "idf": {}}
+MAX_ENTRIES = 2
+MIN_SCORE = 3.0
+MAX_CHARS = 1800
+
+STOPWORDS = {
+    "是什么", "什么", "是谁", "谁", "哪来", "怎么", "为什么", "关系", "介绍", "一下", "哪些",
+    "怎样", "如何",
+}
+
+_cache: dict = {"mtime": 0.0, "entries": []}
+_md_cache: dict = {"mtime": 0.0, "sections": [], "idf": {}, "grams": []}
 
 
-def _bigrams(text: str) -> list[str]:
+def _grams(text: str) -> list[str]:
     cleaned = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+", "", text or "")
     return [cleaned[i : i + 2] for i in range(len(cleaned) - 1)]
 
 
-def _split(raw: str) -> list[tuple[str, str]]:
+def _load_entries() -> list[dict]:
+    try:
+        mtime = JSON_PATH.stat().st_mtime
+    except OSError:
+        return []
+    if _cache["mtime"] == mtime:
+        return _cache["entries"]
+    try:
+        data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    entries = [item for item in data if isinstance(item, dict) and item.get("q")]
+    _cache.update(mtime=mtime, entries=entries)
+    return entries
+
+
+def _score(entry: dict, query: str, query_grams: set[str], name: str = "") -> float:
+    score = 0.0
+    keywords = [str(item).strip() for item in (entry.get("keywords") or [])]
+    for keyword in keywords:
+        if len(keyword) < 2:
+            if keyword and keyword in query and len(query) <= 8:
+                score += 1.0
+            continue
+        if keyword in STOPWORDS:
+            continue
+        if keyword in query:
+            score += 1.0 + 0.5 * min(len(keyword), 5)
+    if name and name in keywords:
+        score += 4.0
+    question = str(entry.get("q") or "")
+    question_grams = set(_grams(question))
+    if question_grams:
+        score += 6.0 * len(question_grams & query_grams) / len(question_grams)
+    if question and (question in query or query in question):
+        score += 2.0
+    return score
+
+
+def _lookup_entries(query: str) -> str:
+    entries = _load_entries()
+    if not entries:
+        return ""
+    query_grams = set(_grams(query))
+    matched = re.match(r"^([\u4e00-\u9fffA-Za-z0-9]{1,6}?)(?:是谁|是什么|在哪|怎么样|的过去)", query)
+    name = matched.group(1) if matched else ""
+    scored = sorted(
+        ((_score(entry, query, query_grams, name), entry) for entry in entries),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+    top_score, top = scored[0]
+    if top_score < MIN_SCORE:
+        return ""
+    picked = [top]
+    if len(scored) > 1 and scored[1][0] >= max(MIN_SCORE, top_score * 0.7):
+        picked.append(scored[1][1])
+
+    parts = []
+    used = 0
+    for entry in picked:
+        block = f"【{entry.get('q')}】\n事实：{entry.get('fact')}\n露娜口径：{entry.get('voice')}"
+        if used + len(block) > MAX_CHARS:
+            break
+        parts.append(block)
+        used += len(block)
+    return "\n\n".join(parts)
+
+
+# ----------------------------- Markdown 兜底 -----------------------------
+
+def _split_md(raw: str) -> list[tuple[str, str]]:
     sections: list[tuple[str, str]] = []
     title = ""
     body: list[str] = []
@@ -41,47 +120,37 @@ def _split(raw: str) -> list[tuple[str, str]]:
     return [(title, text) for title, text in sections if text]
 
 
-def _load() -> None:
+def _load_md() -> None:
     try:
-        mtime = KB_PATH.stat().st_mtime
+        mtime = MD_PATH.stat().st_mtime
     except OSError:
         return
-    if _cache["mtime"] == mtime:
+    if _md_cache["mtime"] == mtime:
         return
     try:
-        raw = KB_PATH.read_text(encoding="utf-8")
+        raw = MD_PATH.read_text(encoding="utf-8")
     except OSError:
         return
-
-    sections = _split(raw)
-    grams = [(set(_bigrams(title)), set(_bigrams(body))) for title, body in sections]
-    names = [set(re.findall(r"\*\*([^*\n]{1,20})\*\*", body)) for _, body in sections]
+    sections = _split_md(raw)
+    grams = [(set(_grams(title)), set(_grams(body))) for title, body in sections]
     total = len(sections) or 1
     df: dict[str, int] = {}
     for title_grams, body_grams in grams:
         for gram in title_grams | body_grams:
             df[gram] = df.get(gram, 0) + 1
     idf = {gram: math.log((total + 1) / (count + 1)) + 0.1 for gram, count in df.items()}
+    _md_cache.update(mtime=mtime, sections=sections, grams=grams, idf=idf)
 
-    _cache.update(mtime=mtime, sections=sections, grams=grams, idf=idf, names=names)
 
-
-def lookup(text: str) -> str:
-    """返回拼好的知识库片段；没有相关记录时返回空串。"""
-    query = (text or "").strip()
-    if len(query) < 2:
-        return ""
-    _load()
-    sections = _cache["sections"]
+def _lookup_md(query: str) -> str:
+    _load_md()
+    sections = _md_cache["sections"]
     if not sections:
         return ""
-
-    idf = _cache["idf"]
-    grams = _cache["grams"]
-    names = _cache.get("names") or [set() for _ in sections]
-    query_grams = set(_bigrams(query))
-    scored: list[tuple[float, int, str, str]] = []
-    for (title, body), (title_grams, body_grams), section_names in zip(sections, grams, names):
+    idf = _md_cache["idf"]
+    query_grams = set(_grams(query))
+    scored = []
+    for (title, body), (title_grams, body_grams) in zip(sections, _md_cache["grams"]):
         score = 0.0
         for gram in query_grams:
             weight = idf.get(gram, 0.0)
@@ -89,24 +158,26 @@ def lookup(text: str) -> str:
                 score += weight * 2.5
             elif gram in body_grams:
                 score += weight
-        if any(name in query for name in section_names):
-            score += 1.5
-        if score < MIN_SCORE:
-            continue
-        if len(body) > MAX_SECTION_CHARS:
-            score *= LONG_SECTION_PENALTY
-        scored.append((score, len(body), title, body))
+        if score >= 1.5:
+            scored.append((score, title, body))
     if not scored:
         return ""
-
     scored.sort(key=lambda item: item[0], reverse=True)
-    parts: list[str] = []
+    parts = []
     used = 0
-    for _, _, title, body in scored[:MAX_SECTIONS]:
-        chunk = body if len(body) <= MAX_SECTION_CHARS else body[:MAX_SECTION_CHARS].rstrip() + "……"
+    for _, title, body in scored[:2]:
+        chunk = body if len(body) <= 1200 else body[:1200].rstrip() + "……"
         block = f"【{title}】\n{chunk}"
         if used + len(block) > MAX_CHARS:
             break
         parts.append(block)
         used += len(block)
     return "\n\n".join(parts)
+
+
+def lookup(text: str) -> str:
+    """返回知识库片段；优先问答条目，没有命中再退回 Markdown。"""
+    query = (text or "").strip()
+    if len(query) < 2:
+        return ""
+    return _lookup_entries(query) or _lookup_md(query)
