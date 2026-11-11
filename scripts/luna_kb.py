@@ -74,7 +74,7 @@ def _lookup_entries(query: str) -> str:
     entries = _load_entries()
     if not entries:
         return ""
-    chapter = re.search(r"第\s*([0-9一二三四五六七八九十百]+)\s*章", query)
+    chapter = re.search(r"(?:第\s*)?([0-9一二三四五六七八九十百]+)\s*章", query)
     if chapter:
         number = chapter.group(1)
         if number.isdigit() and int(number) > 44:

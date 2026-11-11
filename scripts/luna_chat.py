@@ -190,9 +190,18 @@ LORE_PATTERN = re.compile(
     r'纯净区|异灾区|异聚塔|零点能|格式塔|门扉|多米尼克|伊什梅尔|塞勒涅|柯蕾多尔|华胥|'
     r'夜航船|亚特兰蒂斯|康斯塔雷耶|大撤退|免疫时代|黄金时代|大筛选|重筛|授格|升格者|'
     r'过去|童年|小时候|身世|来历|指挥官|'
-    r'剧情|主线|章节|第[0-9一二三四五六七八九十百]+章|活动剧情|好感剧情|间章|外篇|简章|'
+    r'剧情|主线|章节|[0-9一二三四五六七八九十百]+章|活动剧情|好感剧情|间章|外篇|简章|'
     r'讲了什么|讲了啥|说了什么|内容)'
 )
+CHAPTER_TITLES = (
+    "序章", "涂鸦艺术", "苦刑之旅", "终末展览", "遗忘黄沙", "破碎幻影", "合金浸染", "逆元坍塌",
+    "噬暗", "黑星坠落", "永久列车", "九龙夜航", "九龙环城", "终焉福音", "视线囚笼", "绝海星火",
+    "永夜胎动", "湮灭残昼", "曙星致意", "空晓界限", "烬海异途", "刻命螺旋", "创绘映想", "凛桎鸣渊",
+    "萦森歧路", "爝火长明", "摇篮游行", "碑火铸脊", "络勾陈", "源解信标", "镜像星尘", "剪身成蝶",
+    "遥行循星", "锈夜逐光", "梦赴光寥之乡", "覆海离声", "溯梦归途", "眠于厄寐之境", "推想视限",
+    "冬冕的凋亡", "更美好的明天", "长路归航", "歧海循光", "远信回响", "流光抛诸寰宇",
+)
+
 LORE_NOTE = (
     '\n\n【资料库】下面是“升格网络”里关于你自己、姐姐、同伴和这个世界的记录。'
     '被问到时直接用自己的话说，不用先声明“我去查”“记录里写着”；最多偶尔带一句“让我想想”。'
@@ -484,7 +493,9 @@ def is_identity_question(text: str) -> bool:
 def is_lore(text: str) -> bool:
     if is_identity_question(text):
         return False
-    return bool(LORE_PATTERN.search(text or ''))
+    if LORE_PATTERN.search(text or ''):
+        return True
+    return any(title in (text or '') for title in CHAPTER_TITLES)
 
 
 def is_capability(text: str) -> bool:
@@ -735,13 +746,14 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     if not tool_result and not target_ask and original and is_lore(original):
         long_answer = True
         extra_blocks.append((LORE_NOTE + load_lore()).strip())
-        chapter_match = re.search(r'第\s*(\d+)\s*章', original or '')
+        chapter_match = re.search(r'(?:第\s*)?(\d+)\s*章', original or '')
         invalid_chapter = bool(chapter_match and int(chapter_match.group(1)) > 44)
         kb = "" if invalid_chapter else luna_kb.lookup(original)
         if kb:
             extra_blocks.append(
                 "【知识库】（条目里的「事实」是提纲，可以展开成 3-5 句，把背景和发生过什么讲清楚；"
-                "「露娜口径」是她说这话时的语气和态度。别只挑一句念，别照抄、别每条都用同一种句式；不要提出处、编号或资料库）\n" + kb
+                "「露娜口径」是她说这话时的语气和态度。别只挑一句念，别照抄、别每条都用同一种句式；"
+                "有资料就正面讲，不要用「不想多讲」「讲过了」敷衍；不要提出处、编号或资料库）\n" + kb
             )
             log(f"kb lore hit key={group_openid} chars={len(kb)}")
         else:
