@@ -627,14 +627,18 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
         remember(group_openid, "assistant", answer)
         return answer
 
-    if original and not privileged and is_task(original):
+    ai_identity_ask = bool(
+        re.search(r"(你是不是|你是|你是个|你就是个|就是个|一个)\s*(AI|ai|人工智能|机器人|程序|模型)", original or "")
+    )
+
+    if original and not privileged and not ai_identity_ask and is_task(original):
         answer = random.choice(REFUSALS)
         log(f"refused task key={group_openid} len={len(original)}")
         remember(group_openid, "user", original[:80], speaker=speaker)
         remember(group_openid, "assistant", answer)
         return answer
 
-    if original and not privileged and is_probe(original):
+    if original and not privileged and not ai_identity_ask and is_probe(original):
         answer = "……你以为这种话术能骗到我？"
         log(f"refused probe key={group_openid} len={len(original)}")
         remember(group_openid, "user", original[:80], speaker=speaker)
