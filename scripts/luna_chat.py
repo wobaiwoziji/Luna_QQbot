@@ -189,14 +189,16 @@ LORE_PATTERN = re.compile(
     r'神威|渡边|七实|苏菲亚|常羽|蒲牢|艾拉|万事|卡列尼娜|丽芙|'
     r'纯净区|异灾区|异聚塔|零点能|格式塔|门扉|多米尼克|伊什梅尔|塞勒涅|柯蕾多尔|华胥|'
     r'夜航船|亚特兰蒂斯|康斯塔雷耶|大撤退|免疫时代|黄金时代|大筛选|重筛|授格|升格者|'
-    r'过去|童年|小时候|身世|来历|指挥官)'
+    r'过去|童年|小时候|身世|来历|指挥官|'
+    r'剧情|主线|章节|第[0-9一二三四五六七八九十百]+章|活动剧情|好感剧情|间章|外篇|简章|'
+    r'讲了什么|讲了啥|说了什么|内容)'
 )
 LORE_NOTE = (
     '\n\n【资料库】下面是“升格网络”里关于你自己、姐姐、同伴和这个世界的记录。'
     '被问到时直接用自己的话说，不用先声明“我去查”“记录里写着”；最多偶尔带一句“让我想想”。'
     '不要照抄、不要列清单、不要写成说明文；被问设定、地点、人物、事件时，3-5 句，最多 150 字，'
     '把背景、发生过什么、关键细节讲清楚，最后可以带一句评价；别只丢一句结论。'
-    '记录里没有的就直说不知道，不要编造。\n'
+    '记录里没有的具体剧情、场景、对白，不要自己补；直接说记不清或不知道，别编。\n'
 )
 
 
@@ -314,7 +316,8 @@ def web_search(text: str) -> str:
 
 def web_lore(text: str) -> str:
     query = re.sub(
-        r'(发生了什么|是什么|是谁|怎么样|介绍一下|告诉我|请|问一下|你知道|为什么|怎么|哪些|什么)',
+        r'(发生了什么|是什么|是谁|怎么样|介绍一下|告诉我|请|问一下|你知道|为什么|怎么|哪些|什么|'
+        r'感受|觉得|怎么看|想法|印象|剧情|主线|章节|第[0-9一二三四五六七八九十百]+章|那段)',
         ' ',
         text or '',
     )
@@ -393,7 +396,8 @@ def _kuro_extract(data: dict) -> str:
 def kuro_lore(text: str) -> str:
     """库街区 WIKI：优先查档案馆/世界观，其次剧情回顾，失败返回空串。"""
     query = re.sub(
-        r'(发生了什么|是什么|是谁|怎么样|介绍一下|告诉我|请|问一下|你知道|为什么|怎么|哪些|什么|战双|的)',
+        r'(发生了什么|是什么|是谁|怎么样|介绍一下|告诉我|请|问一下|你知道|为什么|怎么|哪些|什么|战双|的|'
+        r'感受|觉得|怎么看|想法|印象|剧情|主线|章节|第[0-9一二三四五六七八九十百]+章|那段)',
         ' ',
         text or '',
     )
@@ -731,7 +735,9 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     if not tool_result and not target_ask and original and is_lore(original):
         long_answer = True
         extra_blocks.append((LORE_NOTE + load_lore()).strip())
-        kb = luna_kb.lookup(original)
+        chapter_match = re.search(r'第\s*(\d+)\s*章', original or '')
+        invalid_chapter = bool(chapter_match and int(chapter_match.group(1)) > 44)
+        kb = "" if invalid_chapter else luna_kb.lookup(original)
         if kb:
             extra_blocks.append(
                 "【知识库】（条目里的「事实」是提纲，可以展开成 3-5 句，把背景和发生过什么讲清楚；"
@@ -740,19 +746,31 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
             log(f"kb lore hit key={group_openid} chars={len(kb)}")
         else:
             log(f"kb lore miss key={group_openid}")
-            fetched = kuro_lore(original)
-            if fetched:
-                log(f'kuro lore hit key={group_openid} chars={len(fetched)}')
+            if invalid_chapter:
+                log(f"lore invalid chapter key={group_openid}")
+                extra_blocks.append(
+                    "【没有查到可靠资料】（没有第 " + chapter_match.group(1) + " 章的记录。"
+                    "直接说不知道、记不清，不要编造剧情。）"
+                )
+                fetched = ""
             else:
-                log(f'kuro lore miss key={group_openid}')
-                fetched = web_lore(original) or web_search(original)
+                fetched = kuro_lore(original)
+                if fetched:
+                    log(f'kuro lore hit key={group_openid} chars={len(fetched)}')
+                else:
+                    log(f'kuro lore miss key={group_openid}')
+                    fetched = web_lore(original) or web_search(original)
             if fetched:
                 extra_blocks.append(
                     "【实时检索到的资料】（可能不完整，和上面的记录冲突时以记录为准）\n" + fetched
                 )
                 log(f"lore web hit key={group_openid} chars={len(fetched)}")
-            else:
+            elif not invalid_chapter:
                 log(f"lore web miss key={group_openid}")
+                extra_blocks.append(
+                    "【没有查到可靠资料】（这是具体的剧情/设定问题，资料库里没有对应记录。"
+                    "直接说记不清或不知道，不要编造场景、对白、心理活动。）"
+                )
     elif not identity_ask and not target_ask and original and (SEARCH_PATTERN.search(original) or (
         re.search(r'(更多|详细|继续|还有|补充)', original) and _last_query.get(group_openid)
     )):

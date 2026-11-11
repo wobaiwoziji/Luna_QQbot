@@ -74,6 +74,16 @@ def _lookup_entries(query: str) -> str:
     entries = _load_entries()
     if not entries:
         return ""
+    chapter = re.search(r"第\s*([0-9一二三四五六七八九十百]+)\s*章", query)
+    if chapter:
+        number = chapter.group(1)
+        if number.isdigit() and int(number) > 44:
+            return ""
+        if not any(
+            number in (str(item.get("q") or "") + "".join(map(str, item.get("keywords") or [])) + str(item.get("source") or ""))
+            for item in entries
+        ):
+            return ""
     query_grams = set(_grams(query))
     matched = re.match(r"^([\u4e00-\u9fffA-Za-z0-9]{1,6}?)(?:是谁|是什么|在哪|怎么样|的过去)", query)
     name = matched.group(1) if matched else ""
