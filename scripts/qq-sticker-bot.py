@@ -97,6 +97,7 @@ HINT_TEXT = (
 HELP_TEXT = (
     "🤖 升格网络 指令（@我 + /指令）\n"
     "· /找图 角色名 [1|2]：例 /找图 灵梦 2、/找图 随机图（每人 5 分钟）\n"
+    "· /以图搜图：发图或引用图后发送，反查出处（Pixiv / 图站）\n"
     "· /聊天总结：当日群聊要点卡片（每群 10 分钟，至少 5 条）\n"
     "· /露娜 想说的话：让露娜用她的口吻回你（每人 20 秒）\n"
     "· /q弹：发图片或引用图片 + /q弹 → 生成循环动图（每人 60 秒）\n"
@@ -799,6 +800,7 @@ def main() -> int:
     chat = load_module("chat_log.py", "chat_log")
     summary = load_module("chat_summary.py", "chat_summary")
     jelly = load_module("qq-jelly.py", "qq_jelly")
+    reverse = load_module("reverse_image.py", "reverse_image")
     help_card = load_module("qq-help-card.py", "help_card")
     help_menu = load_module("luna_help_menu.py", "luna_help_menu")
     weather = load_module("luna_weather.py", "luna_weather")
@@ -1007,6 +1009,7 @@ def main() -> int:
     last_notice = {}
     last_summary = {}
     last_jelly = {}
+    last_reverse = {}
     last_jelly_hint = {}
     last_help = {}
     last_unknown = {}
@@ -1641,6 +1644,50 @@ def main() -> int:
                             )
                         except Exception as exc:
                             log(f"despise: line send failed: {exc}")
+                    continue
+
+                if cmd in ("以图搜图", "反向搜图", "搜图"):
+                    if not control_enabled("findImage", True):
+                        log(f"reverse: disabled group={group_openid}")
+                        continue
+                    now = time.time()
+                    if now - last_reverse.get(cooldown_key, 0.0) < 15:
+                        log(f"reverse: cooldown key={cooldown_key}")
+                        continue
+                    urls = jelly.deep_image_urls(data)
+                    if not urls:
+                        try:
+                            module.send_group_message(
+                                token,
+                                group_openid,
+                                "以图搜图要一张图：图片和指令一起发，或者引用图片再发。",
+                                msg_id=message_id,
+                            )
+                        except Exception as exc:
+                            log(f"reverse hint failed: {exc}")
+                        continue
+                    last_reverse[cooldown_key] = now
+                    target = ROOT / "logs" / "reverse" / f"{message_id or int(now)}.jpg"
+                    try:
+                        reverse.download(urls[0], target)
+                        results = reverse.search(target)
+                        target.unlink(missing_ok=True)
+                        if results:
+                            text = reverse.format_results(results[:4])
+                            if results[0]["similarity"] < 40:
+                                text = "相似度不高，可能只是构图像。\n\n" + text
+                        else:
+                            text = "没搜到出处。换一张清晰点的，或者只截角色再试。"
+                        module.send_group_message(token, group_openid, text, msg_id=message_id)
+                        log(f"reverse sent results={len(results)}")
+                    except Exception as exc:
+                        log(f"reverse failed: {exc}")
+                        try:
+                            module.send_group_message(
+                                token, group_openid, "搜图失败，稍后再试。", msg_id=message_id
+                            )
+                        except Exception as send_exc:
+                            log(f"reverse notice failed: {send_exc}")
                     continue
 
                 if cmd.lower() in ("q弹", "q"):
