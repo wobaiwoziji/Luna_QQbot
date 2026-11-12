@@ -498,7 +498,7 @@ def identify_image(path) -> str:
     global _lens_module
     if _lens_module is None:
         _lens_module = load_module("google_lens.py", "google_lens")
-    return _lens_module.identify(path)
+    return _lens_module.identify(path, allow_direct=False)
 
 
 def wants_identity(text: str) -> bool:

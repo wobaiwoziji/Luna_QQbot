@@ -160,13 +160,13 @@ class _Mcp:
 
     def close(self) -> None:
         try:
-            self.proc.terminate()
-            self.proc.wait(timeout=5)
+            subprocess.run(
+                ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+            )
         except Exception:
-            try:
-                self.proc.kill()
-            except Exception:
-                pass
+            pass
 
 
 def _extract(body: str) -> str:
@@ -188,8 +188,31 @@ def _extract(body: str) -> str:
     return merged[:400]
 
 
-def identify(path: Path) -> str:
+HELPER_URL = "http://127.0.0.1:7391/identify"
+
+
+def _helper(path: Path, timeout: int = 120) -> str:
+    response = requests.post(HELPER_URL, json={"path": str(path)}, timeout=timeout)
+    data = response.json()
+    if response.status_code != 200:
+        raise RuntimeError(data.get("error") or "helper failed")
+    text = (data.get("text") or "").strip()
+    if not text:
+        raise RuntimeError("helper empty")
+    log(f"helper ok chars={len(text)}")
+    return text
+
+
+def identify(path: Path, allow_helper: bool = True, allow_direct: bool = True) -> str:
     """返回 Lens 识别到的一句话；失败抛异常。"""
+    if allow_helper:
+        try:
+            return _helper(path)
+        except Exception as exc:
+            log(f"helper unavailable: {exc}")
+            if not allow_direct:
+                raise
+
     url, remote = publish(path)
     try:
         mcp = _Mcp()
@@ -201,21 +224,31 @@ def identify(path: Path) -> str:
                 + "&hl=zh-CN"
             )
             mcp.tool("browser_navigate", {"url": target}, timeout=60)
-            time.sleep(10)
-            body = mcp.tool(
-                "browser_evaluate",
-                {"function": "() => document.body.innerText"},
-                timeout=30,
-            )
-            text = body
-            if "### Result" in text:
-                text = text.split("### Result", 1)[1]
-            text = text.strip()
-            if text.startswith('"') and text.endswith('"'):
-                text = text[1:-1]
-            result = _extract(text.replace("\\n", "\n"))
-            if result:
-                return result
+            deadline = time.time() + 45
+            while time.time() < deadline:
+                time.sleep(5)
+                body = mcp.tool(
+                    "browser_evaluate",
+                    {"function": "() => document.body.innerText"},
+                    timeout=25,
+                )
+                text = body
+                if "### Result" in text:
+                    text = text.split("### Result", 1)[1]
+                text = text.strip()
+                if text.startswith('"') and text.endswith('"'):
+                    text = text[1:-1]
+                text = text.replace("\\n", "\n")
+                if "正在思考" in text:
+                    continue
+                if "异常流量" in text or "sorry/index" in text:
+                    raise RuntimeError("google captcha")
+                try:
+                    result = _extract(text)
+                except RuntimeError:
+                    continue
+                if result:
+                    return result
             raise RuntimeError("empty lens result")
         finally:
             mcp.close()
