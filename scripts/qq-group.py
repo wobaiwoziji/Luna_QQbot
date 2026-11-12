@@ -351,24 +351,33 @@ def report_display_name(report: Path) -> str:
     return f"每日简报-{date}.md"
 
 
-def pick_local_luna_line() -> str:
-    recent = []
+def load_quote_state() -> dict:
     try:
-        state = json.loads(QUOTE_STATE.read_text(encoding="utf-8"))
-        recent = [int(item) for item in state.get("recent", [])]
+        data = json.loads(QUOTE_STATE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
     except Exception:
-        recent = []
+        return {}
+
+
+def save_quote_state(state: dict) -> None:
+    try:
+        QUOTE_STATE.parent.mkdir(parents=True, exist_ok=True)
+        QUOTE_STATE.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def pick_local_luna_line() -> str:
+    state = load_quote_state()
+    recent = [int(item) for item in state.get("recent", []) if str(item).isdigit()]
     pool = [index for index in range(len(LUNA_LINES)) if index not in recent]
     if not pool:
         recent = []
         pool = list(range(len(LUNA_LINES)))
     index = random.choice(pool)
     recent = (recent + [index])[-10:]
-    try:
-        QUOTE_STATE.parent.mkdir(parents=True, exist_ok=True)
-        QUOTE_STATE.write_text(json.dumps({"recent": recent}, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+    state["recent"] = recent
+    save_quote_state(state)
     return LUNA_LINES[index]
 
 
@@ -521,6 +530,21 @@ def format_quote(quote: dict) -> str:
             lines.append(f"—— {attribution}")
         lines.extend(["", closing])
     return "\n".join(lines)
+
+
+def daily_quote_message() -> str:
+    state = load_quote_state()
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily = state.get("daily") if isinstance(state.get("daily"), dict) else {}
+    cached = str(daily.get(today) or "").strip()
+    if cached:
+        log(f"今日语录沿用 {today}")
+        return cached
+    message = format_quote(fetch_quote())
+    state["daily"] = {today: message}
+    save_quote_state(state)
+    log(f"今日语录已固定 {today}")
+    return message
 
 
 def mute_group_member(token: str, group_openid: str, member_openid: str, minutes: int = 10) -> dict:
@@ -1078,6 +1102,9 @@ def cmd_push(args) -> int:
                 if gid and gid not in all_groups:
                     all_groups.append(gid)
         targets = [item for item in all_groups if item in control_selected]
+        for item in control_selected:
+            if item not in targets:
+                targets.append(item)
 
     if args.group:
         targets = [item for item in targets if item == args.group]
@@ -1139,7 +1166,7 @@ def cmd_push(args) -> int:
     quote_message = None
     if not send_text and send_quote:
         try:
-            quote_message = format_quote(fetch_quote())
+            quote_message = daily_quote_message()
         except Exception as exc:
             log(f"语录生成失败，将只发送文件: {exc}")
 
