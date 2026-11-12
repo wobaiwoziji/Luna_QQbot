@@ -1667,7 +1667,8 @@ def main() -> int:
                             log(f"reverse hint failed: {exc}")
                         continue
                     last_reverse[cooldown_key] = now
-                    target = ROOT / "logs" / "reverse" / f"{message_id or int(now)}.jpg"
+                    safe_id = re.sub(r"[^0-9A-Za-z_-]", "_", str(message_id or int(now)))[:80]
+                    target = ROOT / "logs" / "reverse" / f"{safe_id}.jpg"
                     try:
                         reverse.download(urls[0], target)
                         results = reverse.search(target)
