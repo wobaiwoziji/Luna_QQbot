@@ -824,14 +824,28 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
                 "只叫「姐姐」，不要叫名字、绰号或全名；可以说你当然记得她，不要说自己没有记录、不认识她、查不到，也不要反问或让她自证。"
             )
 
+    if re.search(r"(二创|同人|\bCP\b|本子|猎奇|触手|人兽|乱伦|R18)", original or "", re.I):
+        extra_blocks.append(
+            "【二创/奇怪关系】正常 CP、玩梗可以嫌弃一句带过；猎奇、性化、暴力、乱伦、非人关系不接、不演、不描述细节，"
+            "冷话拒绝即可；不要攻击作者本人。"
+        )
+
     if images:
         extra_blocks.append(
             "【图片】对方发了图片。只根据你实际看到的画面回答；看不清就说看不清，不要编造画面内容。"
+            "如果画面涉及色情、露骨、血腥猎奇或明显令人不适的内容：不要描述细节，不要复述图里的文字或情节，"
+            "也不要评价；直接冷硬拒绝，把话题按回去，例如「……把这种东西收起来。别让我说第二遍。」"
         )
     elif not tool_result and re.search(r"(这张|那张|图里|图片|照片|截图|看图)", original):
-        extra_blocks.append(
-            "【没有收到图片】这次没有可读取的图片，不要编造图片内容；直接说没看到图，让对方重发。"
-        )
+        if re.search(r"(色情|黄图|小黄文|裸照|涩图|猎奇|本子|好色)", original):
+            extra_blocks.append(
+                "【没有收到图片】对方在提不合适的内容。不要让他重发，也不要接话；直接冷硬拒绝，"
+                "例如「……那种东西别拿到我面前来。」"
+            )
+        else:
+            extra_blocks.append(
+                "【没有收到图片】这次没有可读取的图片，不要编造图片内容；直接说没看到图，让对方重发。"
+            )
 
     if extra_blocks:
         prompt = prompt + "\n\n" + "\n\n".join(extra_blocks)
