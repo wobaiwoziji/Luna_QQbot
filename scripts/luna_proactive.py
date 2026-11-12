@@ -119,6 +119,12 @@ def ask_model(lines: list[str], sister_present: bool, respected_present: bool = 
     hint = "（注意：姐姐本人刚刚在群里说过话。）" if sister_present else ""
     extra = luna_chat.RESPECT_NOTE if respected_present else ""
     text_prompt = hint + "最近的群聊：\n" + "\n".join(lines[-40:])
+    if image_files:
+        text_prompt += (
+            "\n\n【图片】只根据实际画面判断。如果图片是色情、露骨、血腥猎奇（尤其像加百列、噬月异种这类离谱东西）："
+            "不要描述细节，不要复述图里的文字或情节；只吐槽一句文明层面的绝望，"
+            "例如「……还有人类吗。」「看来人类文明，真的是凶多吉少了。」「人类在哪儿。」"
+        )
     parts = [{"type": "text", "text": text_prompt}]
     for path in (image_files or [])[:2]:
         try:
