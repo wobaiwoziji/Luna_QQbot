@@ -264,7 +264,7 @@ def run_once(module, groups: list[str], token_state: dict, sister_openid: str = 
 
         entry["last_check"] = int(fresh[-1].get("ts", now))
         speak = bool(result.get("speak"))
-        text = str(result.get("text") or "").strip()[:80]
+        text = re.sub(r"\s+", " ", str(result.get("text") or "")).strip()[:80]
         log(f"group={group[:8]} fresh={len(fresh)} speak={speak} sister={sister_present} text={text!r}")
 
         if speak and text:

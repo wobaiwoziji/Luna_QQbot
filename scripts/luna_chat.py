@@ -892,6 +892,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
     token_usage.from_response(source, model, payload, images=len(images or []))
     answer = str(payload["choices"][0]["message"]["content"] or "").strip()
     answer = answer.strip('"“”「」')
+    answer = re.sub(r"\s*\n+\s*", " ", answer).strip()
     if sister and (
         re.search(
             r"(不认识你|不记得你|没有你的(记录|资料)|没有记录你|查不到你|你是谁|"
