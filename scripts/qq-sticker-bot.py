@@ -44,6 +44,8 @@ HINT_COOLDOWN = 60
 JELLY_COOLDOWN = 60
 LUNA_COOLDOWN = 20
 PROGRESS_SEARCH_DELAY = 3.0
+LENS_COOLDOWN = 30
+LAST_LENS = {}
 PROGRESS_DOWNLOAD_DELAY = 6.0
 TASK_LIMIT = 3
 TASK_WINDOW = 600
@@ -265,6 +267,16 @@ def send_mention_reply(**kwargs) -> None:
             except Exception as exc:
                 log(f"luna image hint failed: {exc}")
             return
+    lens_info = ""
+    if images and wants_identity(kwargs.get("plain") or kwargs.get("args") or ""):
+        if time.time() - LAST_LENS.get(cooldown_key, 0.0) >= LENS_COOLDOWN:
+            LAST_LENS[cooldown_key] = time.time()
+            try:
+                lens_info = identify_image(images[0])
+                log(f"lens hit key={cooldown_key} chars={len(lens_info)}")
+            except Exception as exc:
+                log(f"lens failed key={cooldown_key}: {exc}")
+
     tool = None
     if kwargs.get("tools_enabled") and kwargs.get("tools"):
         try:
@@ -299,7 +311,8 @@ def send_mention_reply(**kwargs) -> None:
             optional=not tool,
             source=kwargs["source"],
             profile=kwargs["profile"],
-            tool_result=tool[1] if tool else "",
+            tool_result=tool[1] if tool else lens_info,
+            images=[] if lens_info else images,
             speaker=kwargs["speaker"],
             role_card=kwargs["role_card"],
             privileged=kwargs["privileged"],
@@ -308,7 +321,6 @@ def send_mention_reply(**kwargs) -> None:
             target=kwargs["target"],
             target_card=kwargs["target_card"],
             target_is_sister=kwargs["target_is_sister"],
-            images=images,
         )
     except Exception as exc:
         log(f"luna: addressed reply failed: {exc}")
@@ -350,6 +362,16 @@ def send_command_reply(**kwargs) -> None:
             except Exception as exc:
                 log(f"luna image hint failed: {exc}")
             return
+    lens_info = ""
+    if images and wants_identity(kwargs.get("plain") or kwargs.get("args") or ""):
+        if time.time() - LAST_LENS.get(cooldown_key, 0.0) >= LENS_COOLDOWN:
+            LAST_LENS[cooldown_key] = time.time()
+            try:
+                lens_info = identify_image(images[0])
+                log(f"lens hit key={cooldown_key} chars={len(lens_info)}")
+            except Exception as exc:
+                log(f"lens failed key={cooldown_key}: {exc}")
+
     tool = None
     if kwargs.get("tools_enabled") and kwargs.get("tools"):
         try:
@@ -379,9 +401,9 @@ def send_command_reply(**kwargs) -> None:
             target=kwargs["target"],
             sister=kwargs["sister"],
             respect=kwargs["respect"],
-            images=images,
+            images=[] if lens_info else images,
             profile=kwargs["profile"],
-            tool_result=tool[1] if tool else "",
+            tool_result=tool[1] if tool else lens_info,
             speaker=kwargs["speaker"],
             role_card=kwargs["role_card"],
             privileged=kwargs["privileged"],
@@ -467,6 +489,20 @@ def load_module(filename: str, alias: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_lens_module = None
+
+
+def identify_image(path) -> str:
+    global _lens_module
+    if _lens_module is None:
+        _lens_module = load_module("google_lens.py", "google_lens")
+    return _lens_module.identify(path)
+
+
+def wants_identity(text: str) -> bool:
+    return bool(re.search(r"(这是谁|这谁|谁啊|是谁|什么角色|哪个角色|认得|认识这|什么机体|哪个机体)", text or ""))
 
 
 def log(message: str) -> None:
