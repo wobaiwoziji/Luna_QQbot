@@ -102,7 +102,11 @@ def _lookup_entries(query: str) -> str:
     parts = []
     used = 0
     for entry in picked:
-        block = f"【{entry.get('q')}】\n事实：{entry.get('fact')}\n露娜口径：{entry.get('voice')}"
+        rows = [f"【{entry.get('q')}】", f"事实：{entry.get('fact')}"]
+        voice = str(entry.get("voice") or "").strip()
+        if voice:
+            rows.append(f"露娜口径：{voice}")
+        block = "\n".join(rows)
         if used + len(block) > MAX_CHARS:
             break
         parts.append(block)
