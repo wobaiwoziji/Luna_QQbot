@@ -824,7 +824,7 @@ def reply(group_openid: str, text: str, context: str = "", target: str = "", sis
                 "只叫「姐姐」，不要叫名字、绰号或全名；可以说你当然记得她，不要说自己没有记录、不认识她、查不到，也不要反问或让她自证。"
             )
 
-    if re.search(r"(二创|同人|\bCP\b|本子|猎奇|触手|人兽|乱伦|R18)", original or "", re.I):
+    if re.search(r"(二创|同人|\bCP\b|本子|猎奇|触手|人兽|乱伦|R18|小黄文|黄文|开车|攻受)", original or "", re.I):
         extra_blocks.append(
             "【二创/奇怪关系】正常 CP、玩梗可以嫌弃一句带过；猎奇、性化、暴力、乱伦、非人关系不接、不演、不描述细节，"
             "冷话拒绝即可；不要攻击作者本人。"
